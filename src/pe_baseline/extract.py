@@ -25,7 +25,7 @@ from .aggregate import FEATURE_PREFIXES
 from .data import SOP, SERIES, STUDY
 from .dicom_io import read_slice, read_z
 from .features import gradient, intensity, texture, wavelet
-from .preprocess import compute_masks, resize_hu
+from .preprocess import compute_masks, peak_hu, resize_hu
 
 META_KEEP = ["PatientID", "Manufacturer", "KVP", "SliceThickness", "pixel_spacing_row",
              "RescaleSlope", "RescaleIntercept", "WindowCenter", "WindowWidth", "Rows", "Columns"]
@@ -33,8 +33,9 @@ META_KEEP = ["PatientID", "Manufacturer", "KVP", "SliceThickness", "pixel_spacin
 
 def slice_features(hu: np.ndarray, cfg: dict) -> dict:
     pre = cfg["preprocess"]
+    peak = peak_hu(hu, pre["out_size"])
     hu = resize_hu(hu, pre["out_size"])
-    masks = compute_masks(hu, pre)
+    masks = compute_masks(hu, pre, peak)
     feats = {}
     feats.update(intensity.extract(hu, masks, cfg))
     feats.update(texture.extract(hu, masks, cfg))

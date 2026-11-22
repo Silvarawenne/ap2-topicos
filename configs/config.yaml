@@ -33,6 +33,8 @@ preprocess:
     mediastinum: [40, 400]
     lung: [-600, 1500]
   lung_threshold_hu: -400
+  bone_hu: 800                  # pico local > 800 HU = osso cortical (contraste intravascular fica < ~650)
+  bone_min_pixels: 3
   vessel_hu: [150, 600]         # lúmen arterial contrastado
   defect_hu: [0, 120]           # falha de enchimento (trombo ~ partes moles)
 

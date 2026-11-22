@@ -31,9 +31,11 @@ rsna-str-pulmonary-embolism-detection` e defina `PE_DATA_ROOT=/caminho/para/os/d
 
 ## 2. Formulação da tarefa
 
-- **Unidade de amostra:** o exame (`StudyInstanceUID`). Cada exame é de um paciente diferente
-  (verificado na EDA pelo `PatientID` dos cabeçalhos DICOM), então partir por exame equivale a
-  partir por paciente.
+- **Unidade de amostra:** o exame (`StudyInstanceUID`). Os DICOMs da competição são
+  anonimizados (`PatientID` e `Manufacturer` vêm vazios, conferido na EDA nos 7.279 exames),
+  então **não é possível verificar** se um mesmo paciente aparece em mais de um exame. Assumimos
+  1 exame = 1 paciente, como na descrição do conjunto, e particionamos sempre por exame; isso é
+  uma limitação declarada.
 - **Tarefa principal (exame):** o exame tem TEP? `pe = 1` se `negative_exam_for_pe = 0` e
   `indeterminate = 0`. Exames *indeterminados* (qualidade insuficiente para laudo) não têm
   verdade binária e ficam fora da amostra do TP1, mas recebem partição.
@@ -71,7 +73,7 @@ rsna-str-pulmonary-embolism-detection` e defina `PE_DATA_ROOT=/caminho/para/os/d
 | Resolução | 512 → **256 px** (cerca de 1,4 mm/px), bilinear com anti-aliasing | reduz o custo cerca de 4×. Abaixo disso, êmbolos segmentares (poucos mm) começam a desaparecer, então 256 é o limite que adotamos |
 | Janelas | CTPA (L100/W700), mediastino (L40/W400), pulmão (L-600/W1500) | a janela CTPA separa contraste arterial (cerca de 250–500 HU) de trombo (cerca de 20–100 HU) |
 | ROI torácica | casco convexo dos pulmões (limiar de -400 HU, remoção de ar externo) | contém pulmões e mediastino, onde estão as artérias pulmonares. Exclui mesa, braços e parede |
-| Máscara de vaso | ROI ∩ HU ∈ [150, 600] | lúmen arterial opacificado |
+| Máscara de vaso | ROI ∩ HU ∈ [150, 600], **sem osso** | lúmen arterial opacificado. Osso = componente conexo (HU ≥ 150) com pico local > 800 HU (máximo 2×2 antes da média, que dilui o córtex fino). Sem isso, na TC real o corpo vertebral gerava centenas de falsos candidatos (214 → 1 no corte de teste). Costelas e esterno ainda aparecem como vaso (limitação) |
 | Máscara de falha de enchimento | partes moles (0–120 HU) **cercadas** por contraste (buraco no lúmen, ou vizinhança 7×7 com mais de 55% de vaso) | é o sinal radiológico direto de TEP. O critério "cercada" elimina a borda do vaso (volume parcial), que caía na mesma faixa de HU |
 
 ### 4.2 Descritores: 4 famílias (`src/pe_baseline/features/`)
@@ -125,9 +127,22 @@ ocupa poucos dos cerca de 250 cortes.
 - **Análises:**
   - importância por permutação **de grupo** (família e estatística de pooling);
   - sensibilidade por subtipo (central, lateralidade, crônico, VD/VE);
-  - AUC por qualidade de exame (`qa_contrast`, `qa_motion`, `flow_artifact`) e por fabricante;
+  - AUC por qualidade de exame (`qa_contrast`, `qa_motion`, `flow_artifact`);
   - galeria de VP/VN/FP/FN escolhidos por critério **pré-definido**: os k exames de maior
     confiança em cada célula da matriz de confusão.
+
+## 4.5 O que a TC real mostrou (limitações conhecidas)
+
+- **DICOMs reais:** 94% sem compressão; 474 exames (6,5%) em *JPEG Lossless*, que exigem
+  `pylibjpeg` (`requirements-kaggle.txt`). `RescaleIntercept = 0` em 205 exames (2,8%) ainda
+  precisa de conferência. Espessura de 0,6 a 5 mm; kVp de 80 a 140; pixel de 0,3 a 0,98 mm.
+- **Cortes fora do tórax** (pescoço/abdome, nas pontas do exame) não têm pulmão: a ROI cai para o
+  corpo todo (`int_roi_fallback`). Isso acontece em 56% dos cortes no primeiro décimo do exame e
+  80% no último. Como o TEP só existe no tórax, `int_roi_fallback` e `z_rank` funcionam como
+  atalho para o classificador de corte. Por isso reportamos o desempenho de corte **também só em
+  cortes torácicos** e tratamos o nível de exame como a métrica principal.
+- **Falha de enchimento:** a máscara é uma heurística de HU e forma, não um detector de trombo;
+  ainda marca candidatos no coração (trabéculas) e na borda do esterno.
 
 ## 5. Como reproduzir
 

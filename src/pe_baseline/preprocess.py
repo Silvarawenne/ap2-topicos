@@ -40,6 +40,17 @@ def resize_hu(hu: np.ndarray, out_size: int) -> np.ndarray:
                   anti_aliasing=True).astype(np.float32)
 
 
+def peak_hu(hu: np.ndarray, out_size: int) -> np.ndarray:
+    """Máximo local por bloco (mesma grade de out_size). Preserva o córtex ósseo fino, que a
+    média do redimensionamento dilui abaixo de qualquer limiar útil."""
+    if hu.shape == (out_size, out_size):
+        return hu.astype(np.float32)
+    f = hu.shape[0] // out_size
+    if f >= 2 and hu.shape[0] == f * out_size:
+        return hu.reshape(out_size, f, out_size, f).max(axis=(1, 3)).astype(np.float32)
+    return resize_hu(ndi.maximum_filter(hu, size=2), out_size)
+
+
 def body_mask(hu: np.ndarray) -> np.ndarray:
     body = hu > -500
     body = ndi.binary_opening(body, structure=disk(2))
@@ -63,7 +74,7 @@ def lung_mask(hu: np.ndarray, thr: float = -400) -> np.ndarray:
     return mask
 
 
-def compute_masks(hu: np.ndarray, cfg_pre: dict) -> Masks:
+def compute_masks(hu: np.ndarray, cfg_pre: dict, peak: np.ndarray | None = None) -> Masks:
     lung = lung_mask(hu, cfg_pre["lung_threshold_hu"])
     fallback = lung.sum() < 0.01 * hu.size
     if fallback:
@@ -72,14 +83,26 @@ def compute_masks(hu: np.ndarray, cfg_pre: dict) -> Masks:
         roi = ndi.binary_dilation(convex_hull_image(lung), structure=disk(3))
     v_lo, v_hi = cfg_pre["vessel_hu"]
     d_lo, d_hi = cfg_pre["defect_hu"]
-    vessel = roi & (hu >= v_lo) & (hu <= v_hi)
+    # Osso: componentes conexos (HU >= 150) que contêm osso cortical (HU > bone_hu).
+    # Sem isso, costelas e vértebra entram como "vaso" (mesma faixa de HU do contraste) e o
+    # miolo esponjoso do corpo vertebral (0-120 HU) vira falso candidato a falha de enchimento.
+    bone = np.zeros_like(roi)
+    cand = roi & (hu >= v_lo)
+    lab = label(cand)
+    if lab.max() > 0:
+        strong = (hu if peak is None else peak) > cfg_pre.get("bone_hu", 800)
+        n_strong = ndi.sum(strong & cand, lab, index=np.arange(1, lab.max() + 1))
+        bone_ids = np.where(n_strong >= cfg_pre.get("bone_min_pixels", 3))[0] + 1
+        bone = np.isin(lab, bone_ids)
+        bone = ndi.binary_dilation(bone, structure=disk(2))
+    vessel = roi & (hu >= v_lo) & (hu <= v_hi) & ~bone
     # Falha de enchimento = densidade de partes moles CERCADA por contraste:
     #  (a) dentro de um "buraco" do lúmen opacificado (sinal do anel de contraste), ou
     #  (b) com fração de vaso > 0.55 na vizinhança 7x7 (falha parcialmente cercada).
     # Isso descarta a borda do vaso, onde o volume parcial (contraste <-> partes moles)
     # produz HU na mesma faixa do trombo. Limitação: trombo mural colado à parede, sem
     # contraste ao redor, não é capturado.
-    soft = roi & ~vessel & (hu >= d_lo) & (hu <= d_hi)
+    soft = roi & ~vessel & ~bone & (hu >= d_lo) & (hu <= d_hi)
     holes = ndi.binary_fill_holes(vessel) & ~vessel
     vessel_frac = ndi.uniform_filter(vessel.astype(np.float32), size=7)
     defect = soft & (holes | (vessel_frac > 0.55))
