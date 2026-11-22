@@ -67,7 +67,7 @@ def push_kernel(user, stage, code_slug, shard, n_shards, limit, features_kernels
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["code", "kernel"])
-    ap.add_argument("stage", nargs="?", choices=["smoke", "extract", "experiments"])
+    ap.add_argument("stage", nargs="?", choices=["smoke", "eda", "extract", "experiments"])
     ap.add_argument("--user", default=os.environ.get("KAGGLE_OWNER", "rawennedasilvaleite"))
     ap.add_argument("--code-slug", default="ap2-topicos-code")
     ap.add_argument("--shard", type=int, default=0)

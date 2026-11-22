@@ -1,7 +1,8 @@
 """Executor para Kaggle Kernels (enviado com `kaggle kernels push`).
 
 Uso dentro do kernel (o estágio vem da variável STAGE no topo, preenchida por kaggle/push.py):
-  smoke        EDA completa + extração de poucos exames (mede tempo real por exame)
+  smoke        extração de poucos exames (mede tempo real por exame)
+  eda          EDA completa (cabeçalhos DICOM de todos os exames)
   extract      extração de características (aceita SHARD/N_SHARDS)
   experiments  experimentos + figuras (lê as características da saída do kernel de extração)
 
@@ -56,14 +57,8 @@ sh(f"{sys.executable} -m pip install -q -r requirements-kaggle.txt", check=False
 sh(f"nproc; free -g | head -2; df -h {WORK} | tail -1", check=False)
 
 if STAGE == "smoke":
+    # Teste curto: partição + extração de poucos exames, só para medir tempo e validar DICOM/máscaras.
     sh(f"{sys.executable} scripts/01_make_split_and_sample.py")
-    # EDA: executa o notebook versionado, trocando só a célula de setup do Kaggle
-    import nbformat
-    nb = nbformat.read("notebooks/00_eda.ipynb", 4)
-    nb.cells[1].source = f"import os, sys; os.chdir('{REPO}'); sys.path.insert(0, '{REPO}/src')"
-    nbformat.write(nb, "notebooks/00_eda_run.ipynb")
-    sh("jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=3600 "
-       "notebooks/00_eda_run.ipynb --output 00_eda_executed.ipynb", check=False)
     t = time.time()
     sh(f"{sys.executable} -W ignore scripts/02_extract_features.py --limit {LIMIT or 20} "
        f"--chunk-size 10 --out-dir {WORK}/smoke_features")
@@ -71,12 +66,24 @@ if STAGE == "smoke":
     sh(f"{sys.executable} - <<'EOF'\n"
        "import pandas as pd, glob\n"
        f"df = pd.concat(pd.read_parquet(f) for f in glob.glob('{WORK}/smoke_features/*.parquet'))\n"
-       "print('cortes', len(df), '| status', df.status.str.slice(0, 60).value_counts().to_dict())\n"
+       "print('cortes', len(df), '| status', df.status.str.slice(0, 80).value_counts().to_dict())\n"
        "ok = df[df.status == 'ok']\n"
        "print(ok.groupby('pe_present_on_image')[['int_defect_frac','int_defect_per_vessel','int_vessel_frac','int_roi_fallback']].mean())\n"
+       "print(ok[[c for c in ok.columns if c.startswith('meta_')]].astype(str).nunique())\n"
        "EOF", check=False)
+
+elif STAGE == "eda":
+    # EDA completa (lê o cabeçalho de todos os exames: pode levar bastante tempo).
+    sh(f"{sys.executable} scripts/01_make_split_and_sample.py")
+    import nbformat
+    nb = nbformat.read("notebooks/00_eda.ipynb", 4)
+    nb.cells[1].source = f"import os, sys; os.chdir('{REPO}'); sys.path.insert(0, '{REPO}/src')"
+    nbformat.write(nb, "notebooks/00_eda_run.ipynb")
+    sh("jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=14400 "
+       "notebooks/00_eda_run.ipynb --output 00_eda_executed.ipynb", check=False)
     shutil.copytree("results", f"{WORK}/results", dirs_exist_ok=True)
-    shutil.copy("notebooks/00_eda_executed.ipynb", WORK) if os.path.exists("notebooks/00_eda_executed.ipynb") else None
+    if os.path.exists("notebooks/00_eda_executed.ipynb"):
+        shutil.copy("notebooks/00_eda_executed.ipynb", WORK)
 
 elif STAGE == "extract":
     os.environ["PE_FEATURES_DIR"] = f"{WORK}/features"
