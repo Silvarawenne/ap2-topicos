@@ -1,0 +1,11 @@
+# Instalado por cima da imagem do Kaggle (o resto já vem pré-instalado).
+# Decodificadores para DICOMs comprimidos (JPEG/JPEG-LS/JPEG2000) presentes no RSNA PE.
+pydicom>=3.0
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.1
+pylibjpeg-openjpeg>=2.3
+python-gdcm>=3.0.24
+PyWavelets>=1.6
+imbalanced-learn>=0.12
+lightgbm>=4.3
+tabulate>=0.9

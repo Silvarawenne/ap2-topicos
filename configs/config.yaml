@@ -1,0 +1,64 @@
+# Configuração central do projeto (TP1 — baseline clássico, G2, RSNA PE 2020).
+# Todos os scripts leem este arquivo. Caminhos são RELATIVOS à raiz do repositório,
+# exceto data.root, que pode ser sobrescrito pela variável de ambiente PE_DATA_ROOT.
+
+seed: 42
+
+data:
+  # Raiz da competição. No Kaggle Notebook o caminho padrão abaixo já funciona.
+  # Fora do Kaggle, defina PE_DATA_ROOT=/caminho/para/rsna-str-pulmonary-embolism-detection
+  root: /kaggle/input/rsna-str-pulmonary-embolism-detection
+  train_csv: train.csv
+  train_dir: train
+
+split:
+  # Partição FIXA por exame/paciente sobre o treino oficial COMPLETO (7.279 exames).
+  # Ela vale para o TP1 e para o TP2 (o TP2 avalia no mesmo conjunto "test").
+  file: splits/split_full_train.csv
+  test_frac: 0.20     # 20% dos exames -> conjunto de teste (nunca usado para ajuste)
+  val_frac: 0.10      # 10% -> validação (usada no TP2 para época/limiar)
+
+sample:
+  # Amostra estratificada do TP1 (grande, mas não o conjunto inteiro).
+  file: splits/sample_tp1.csv
+  n_dev_exams: 2400   # retirados de train+val -> validação cruzada aninhada
+  n_test_exams: 600   # retirados de test       -> avaliação final, uma única vez
+  slice_stride: 2     # usa 1 a cada 2 cortes de cada exame (ordenados por z)
+
+preprocess:
+  out_size: 256                 # 512 -> 256 px (~1.4 mm/px); ver README
+  hu_clip: [-1024, 3071]
+  windows:                      # (nível, largura) em HU
+    ctpa: [100, 700]            # janela de angio-TC pulmonar
+    mediastinum: [40, 400]
+    lung: [-600, 1500]
+  lung_threshold_hu: -400
+  vessel_hu: [150, 600]         # lúmen arterial contrastado
+  defect_hu: [0, 120]           # falha de enchimento (trombo ~ partes moles)
+
+features:
+  out_dir: features             # gerado; não versionado
+  glcm_levels: 32
+  glcm_distances: [1, 2, 4]
+  lbp: [[8, 1], [16, 2]]
+  hog_size: 128
+  hog_cell: 32
+  wavelet: db2
+  wavelet_levels: 2
+  compute_noroi: true           # colunas extras sem máscara de ROI (ablação)
+
+cv:
+  outer_folds: 5
+  inner_folds: 3
+  n_iter: 8                     # RandomizedSearch por dobra externa (nível de exame)
+  slice_n_iter: 4               # idem, nível de corte (~10^5 linhas; mais caro)
+  topk: 5                       # agregação corte->exame: média das k maiores probabilidades
+  n_bootstrap: 2000
+  n_jobs: -1
+
+experiments:
+  families: [intensity, texture, gradient, wavelet, all]
+  exam_models: [dummy, logreg, svm_rbf, rf, lgbm, mlp]
+  slice_models: [dummy, logreg, lgbm]
+
+results_dir: results

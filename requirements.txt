@@ -1,0 +1,19 @@
+# Versões exatas usadas no desenvolvimento/teste (Python 3.11+).
+# No Kaggle, results/environment.txt registra as versões efetivamente usadas na execução.
+numpy==2.5.3
+pandas==3.0.5
+scipy==1.18.1
+scikit-learn==1.9.1
+scikit-image==0.26.0
+imbalanced-learn==0.14.2
+lightgbm==4.7.0
+pydicom==3.0.2
+PyWavelets==1.10.0
+pyarrow==26.0.1
+PyYAML==6.0.3
+joblib==1.6.0
+matplotlib==3.11.2
+seaborn==0.13.2
+tabulate==0.10.0
+tqdm==4.70.1
+pytest==9.1.1

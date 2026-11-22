@@ -1,0 +1,12 @@
+# Dados brutos e intermediários grandes NÃO vão para o repositório
+features/
+*.dcm
+data/
+*.parquet
+!results/**/*.csv
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.zip
+.DS_Store
