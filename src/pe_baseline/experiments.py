@@ -93,8 +93,18 @@ def slice_level(slices_dev: pd.DataFrame, dev: pd.DataFrame, cfg: dict, folds: p
         res = nested_cv(X, y, g, model, seed, cv, outer_splits=splits, model_jobs=cv["n_jobs"],
                         search_jobs=1, n_iter=cv["slice_n_iter"])
         summ = summarize(res["folds"])
+        # Só cortes torácicos (com pulmão): remove o atalho "fora do tórax => sem TEP".
+        thor = (slices_dev["int_roi_fallback"].values == 0)
+        aucs = []
+        for _, te in splits:
+            m = te[thor[te]]
+            if len(np.unique(y[m])) > 1:
+                aucs.append(roc_auc_score(y[m], res["oof"][m]))
+        summ["auc_roc_thoracic_mean"] = float(np.mean(aucs)) if aucs else np.nan
+        summ["auc_roc_thoracic_std"] = float(np.std(aucs, ddof=1)) if len(aucs) > 1 else np.nan
         rows.append({"model": model, "n_features": len(cols), **summ, "seconds": time.time() - t0})
-        log(f"corte | {model:7s} AUC={summ['auc_roc_mean']:.3f}±{summ['auc_roc_std']:.3f} ({time.time() - t0:.0f}s)")
+        log(f"corte | {model:7s} AUC={summ['auc_roc_mean']:.3f}±{summ['auc_roc_std']:.3f} "
+            f"| só tórax {summ['auc_roc_thoracic_mean']:.3f} ({time.time() - t0:.0f}s)")
         for k, (_, te) in enumerate(splits):
             agg = pool_probabilities(g[te], res["oof"][te], k=cv["topk"])
             yy = agg[STUDY].map(exam_y).values
