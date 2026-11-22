@@ -53,24 +53,35 @@ train_csv = find_one("/kaggle/input/**/rsna-str-pulmonary-embolism-detection*/tr
 os.environ["PE_DATA_ROOT"] = os.path.dirname(train_csv)
 print("código:", code_root, "| dados:", os.environ["PE_DATA_ROOT"], flush=True)
 
-sh(f"{sys.executable} -m pip install -q -r requirements-kaggle.txt", check=False)
+sh(f"timeout 300 {sys.executable} -m pip install -q -r requirements-kaggle.txt", check=False)
 sh(f"nproc; free -g | head -2; df -h {WORK} | tail -1", check=False)
 
 if STAGE == "smoke":
-    # Teste curto: partição + extração de poucos exames, só para medir tempo e validar DICOM/máscaras.
-    sh(f"{sys.executable} scripts/01_make_split_and_sample.py")
-    t = time.time()
-    sh(f"{sys.executable} -W ignore scripts/02_extract_features.py --limit {LIMIT or 20} "
-       f"--chunk-size 10 --out-dir {WORK}/smoke_features")
-    print(f"\n### TEMPO extração {LIMIT or 20} exames: {(time.time() - t) / 60:.2f} min", flush=True)
-    sh(f"{sys.executable} - <<'EOF'\n"
-       "import pandas as pd, glob\n"
-       f"df = pd.concat(pd.read_parquet(f) for f in glob.glob('{WORK}/smoke_features/*.parquet'))\n"
-       "print('cortes', len(df), '| status', df.status.str.slice(0, 80).value_counts().to_dict())\n"
-       "ok = df[df.status == 'ok']\n"
-       "print(ok.groupby('pe_present_on_image')[['int_defect_frac','int_defect_per_vessel','int_vessel_frac','int_roi_fallback']].mean())\n"
-       "print(ok[[c for c in ok.columns if c.startswith('meta_')]].astype(str).nunique())\n"
+    # Diagnóstico curto com cronômetro por etapa (cada linha é impressa na hora).
+    sh(f"{sys.executable} -u scripts/01_make_split_and_sample.py | tail -3")
+    sh(f"{sys.executable} -u - <<'EOF'\n"
+       "import time, glob, os, sys\n"
+       "sys.path.insert(0, 'src')\n"
+       "import pandas as pd, numpy as np\n"
+       "from pe_baseline.config import load_config, data_path\n"
+       "from pe_baseline.dicom_io import read_slice\n"
+       "from pe_baseline.extract import slice_features\n"
+       "cfg = load_config()\n"
+       "t = time.time(); tr = pd.read_csv(data_path(cfg, 'train.csv'), nrows=2000); print('ler train.csv (2000 linhas): %.1fs' % (time.time() - t), flush=True)\n"
+       "r = tr.iloc[0]\n"
+       "d = data_path(cfg, 'train', r.StudyInstanceUID, r.SeriesInstanceUID)\n"
+       "t = time.time(); files = sorted(os.listdir(d)); print('listar pasta (%d arquivos): %.2fs' % (len(files), time.time() - t), flush=True)\n"
+       "for i in range(3):\n"
+       "    t = time.time(); sl = read_slice(d / files[i * 40]); print('ler 1 DICOM #%d: %.3fs shape=%s HU[%.0f,%.0f] %s' % (i, time.time() - t, sl.hu.shape, sl.hu.min(), sl.hu.max(), sl.meta.get('Manufacturer')), flush=True)\n"
+       "t = time.time(); f = slice_features(sl.hu, cfg); print('descritores de 1 corte: %.3fs (%d feats)' % (time.time() - t, len(f)), flush=True)\n"
+       "t = time.time()\n"
+       "for k in range(0, 60, 2): read_slice(d / files[k])\n"
+       "print('ler 30 DICOMs em sequência: %.2fs' % (time.time() - t), flush=True)\n"
        "EOF", check=False)
+    t = time.time()
+    sh(f"{sys.executable} -u -W ignore scripts/02_extract_features.py --limit {LIMIT or 5} "
+       f"--chunk-size 5 --n-jobs 4 --out-dir {WORK}/smoke_features", check=False)
+    print(f"\n### TEMPO extração {LIMIT or 5} exames: {(time.time() - t) / 60:.2f} min", flush=True)
 
 elif STAGE == "eda":
     # EDA completa (lê o cabeçalho de todos os exames: pode levar bastante tempo).
