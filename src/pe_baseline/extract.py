@@ -13,6 +13,8 @@ Os cortes de cada exame são ordenados por z e subamostrados com passo fixo
 from __future__ import annotations
 
 import faulthandler
+import multiprocessing as mp
+import queue
 import signal
 import sys
 import time
@@ -95,6 +97,35 @@ def process_exam(study: str, exam_rows: pd.DataFrame, cfg: dict) -> list[dict]:
     return out
 
 
+def _child(q, study, exam_rows, cfg):
+    try:
+        q.put(("ok", process_exam(study, exam_rows, cfg)))
+    except BaseException as exc:  # noqa: BLE001
+        q.put(("err", repr(exc)[:300]))
+
+
+def process_exam_guarded(study: str, exam_rows: pd.DataFrame, cfg: dict) -> list[dict]:
+    """Roda o exame em processo separado com limite de tempo duro. Travamento em código nativo
+    (que o alarme não interrompe) mata só esse exame, que fica registrado como excluído."""
+    limit = float(cfg["preprocess"].get("exam_timeout_s", 900))
+    ctx = mp.get_context("fork")
+    q = ctx.Queue()
+    p = ctx.Process(target=_child, args=(q, study, exam_rows, cfg))
+    p.start()
+    try:
+        kind, payload = q.get(timeout=limit)
+    except queue.Empty:
+        kind, payload = "err", f"timeout do exame ({limit:.0f}s)"
+    finally:
+        if p.is_alive():
+            p.kill()
+        p.join()
+    if kind == "ok":
+        return payload
+    sops = exam_rows[SOP].tolist()
+    return [{STUDY: study, SOP: sop, "status": f"error: exame excluído: {payload}"[:300]} for sop in sops]
+
+
 def run_extraction(cfg: dict, train: pd.DataFrame, studies: list[str], out_dir: Path,
                    shard: int = 0, n_shards: int = 1, chunk_size: int = 40,
                    n_jobs: int = -1, verbose: bool = True) -> list[Path]:
@@ -112,7 +143,7 @@ def run_extraction(cfg: dict, train: pd.DataFrame, studies: list[str], out_dir: 
         t0 = time.time()
         try:
             results = Parallel(n_jobs=n_jobs)(
-                delayed(process_exam)(s, by_study[s], cfg) for s in chunk)
+                delayed(process_exam_guarded)(s, by_study[s], cfg) for s in chunk)
         except Exception:
             traceback.print_exc()
             raise
