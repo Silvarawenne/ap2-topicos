@@ -190,6 +190,47 @@ kernels menores; a extração ganhou um limite de tempo por corte e por exame (p
 morto após 15 min, exame registrado como excluído). Nenhum exame precisou ser excluído, e as
 características dos exames refeitos vêm do mesmo código, exceto essa proteção.
 
+## 4.7 Análise de erro qualitativa (`results/figures/fig_error_gallery.png`)
+
+![galeria](results/figures/fig_error_gallery.png)
+
+**Critério (definido antes de olhar as imagens):** no conjunto de teste, para cada célula da
+matriz de confusão (VP, VN, FP, FN) mostramos os 3 exames com a maior confiança *dentro da
+célula* (mais alto para VP/FP, mais baixo para VN/FN) e, de cada um, o corte com maior
+probabilidade do classificador de corte. Amarelo: ROI; vermelho: candidatos a falha de
+enchimento. São **12 imagens escolhidas por confiança, não uma amostra aleatória**; servem para
+levantar hipóteses, que **não foram testadas** (a evidência quantitativa está nas seções 4.6).
+
+O que as imagens mostram, e as causas que hipotetizamos:
+
+1. **A ROI falha em parte dos exames.** Em 5 das 12 imagens o casco convexo "vaza" para fora do
+   tórax (cunha até a mesa de exame, VN 1; arestas retas em FP 1, FP 3 e FN 1). *Hipótese:* ar
+   fora do corpo ou entre a mesa e o paciente é tomado como pulmão e entra no casco; isso
+   contamina as estatísticas de intensidade, textura e gradiente do corte.
+2. **Os candidatos a falha de enchimento caem em estruturas que não são trombo:** raiz da aorta e
+   valvas/calcificações (VP 2, VP 3, VN 2), esterno (VN 2), corpo vertebral e esôfago (FP 1 tem o
+   maior agrupamento vermelho justamente sobre a coluna). *Hipótese:* a heurística de HU e forma
+   (seção 4.1) não distingue trombo de calcificação, osso esponjoso e parede cardíaca; a remoção
+   de osso por pico local melhorou o caso da vértebra, mas não resolve o esterno nem as valvas.
+3. **Acertar o exame não significa acertar o corte.** Em VP 1 e em FN 3 o corte mais suspeito
+   tem rótulo 0 (sem êmbolo). *Hipótese:* o exame foi classificado como positivo (VP 1) ou
+   negativo (FN 3) por características globais, e não por ver o trombo, o que combina com o
+   nível de corte ter AUC 0,84 mas só 0,79 em cortes torácicos e com a agregação corte → exame
+   (0,56) ser pior que o pooling das características (0,63).
+4. **Falsos negativos com bom corte e exame baixo.** Em FN 1 o corte mais suspeito é de fato
+   positivo (p = 0,73), mas a probabilidade do exame é 0,19. *Hipótese:* um êmbolo visível em
+   poucos cortes é diluído pelo pooling (média, desvio e percentil 90 de ~125 cortes por exame).
+   O pooling por máximo não resolveu na CV (0,607 vs 0,629), então o problema também está na
+   variabilidade dos cortes negativos.
+5. **Opacificação do contraste varia.** Em FN 2 as artérias pulmonares quase não realçam, e
+   nesses exames a máscara de vaso (150–600 HU) tem pouco a detectar. *Hipótese:* a
+   temporização do contraste degrada o sinal que nossos descritores exploram. Nos FP 1–2, o
+   realce é intenso e o modelo ainda assim marca positivo, o que sugere que ele também reage a
+   fatores de aquisição e anatomia, e não só a falhas de enchimento.
+
+Limitação desta análise: sem leitura radiológica, não sabemos se o êmbolo de cada VP/FN está nos
+cortes mostrados, e o rótulo de corte é a única verdade disponível.
+
 ## 5. Como reproduzir
 
 ### No Kaggle (recomendado: dados sem download)
