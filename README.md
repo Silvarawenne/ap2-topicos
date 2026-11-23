@@ -204,7 +204,7 @@ levantar hipóteses, que **não foram testadas** (a evidência quantitativa est�
 O que as imagens mostram, e as causas que hipotetizamos:
 
 1. **A ROI falha em parte dos exames.** Em 5 das 12 imagens o casco convexo "vaza" para fora do
-   tórax (cunha até a mesa de exame, VN 1; arestas retas em FP 1, FP 3 e FN 1). *Hipótese:* ar
+   tórax (cunha até a mesa de exame em VN 1 e FN 1; arestas retas em FP 1, FP 3 e VP 2). *Hipótese:* ar
    fora do corpo ou entre a mesa e o paciente é tomado como pulmão e entra no casco; isso
    contamina as estatísticas de intensidade, textura e gradiente do corte.
 2. **Os candidatos a falha de enchimento caem em estruturas que não são trombo:** raiz da aorta e
