@@ -4,6 +4,7 @@ Uso dentro do kernel (o estágio vem da variável STAGE no topo, preenchida por 
   smoke        extração de poucos exames (mede tempo real por exame)
   eda          EDA completa (cabeçalhos DICOM de todos os exames)
   extract      extração de características (aceita SHARD/N_SHARDS)
+  gallery      galeria de acertos/erros do teste (lê results/ do dataset de código + DICOMs)
   experiments  experimentos + figuras (lê as características da saída do kernel de extração)
 
 Tudo é escrito em /kaggle/working (vira a saída do kernel).
@@ -119,6 +120,10 @@ elif STAGE == "experiments":
     os.environ["PE_FEATURES_DIR"] = merged
     os.environ["PE_RESULTS_DIR"] = f"{WORK}/results"
     sh(f"{sys.executable} -W ignore scripts/03_run_experiments.py")
+    sh(f"{sys.executable} -W ignore scripts/04_make_figures.py --gallery")
+elif STAGE == "gallery":
+    os.environ["PE_RESULTS_DIR"] = f"{WORK}/results"
+    shutil.copytree("results", f"{WORK}/results", dirs_exist_ok=True)
     sh(f"{sys.executable} -W ignore scripts/04_make_figures.py --gallery")
 else:
     raise SystemExit(f"STAGE desconhecido: {STAGE}")

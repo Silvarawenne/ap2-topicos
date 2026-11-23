@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMP = "rsna-str-pulmonary-embolism-detection"
-CODE_ITEMS = ["src", "scripts", "configs", "splits", "notebooks", "requirements-kaggle.txt", "README.md"]
+CODE_ITEMS = ["src", "scripts", "configs", "splits", "notebooks", "results", "requirements-kaggle.txt", "README.md"]
 
 
 def run(cmd):
@@ -67,7 +67,7 @@ def push_kernel(user, stage, code_slug, shard, n_shards, limit, features_kernels
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["code", "kernel"])
-    ap.add_argument("stage", nargs="?", choices=["smoke", "eda", "extract", "experiments"])
+    ap.add_argument("stage", nargs="?", choices=["smoke", "eda", "extract", "experiments", "gallery"])
     ap.add_argument("--user", default=os.environ.get("KAGGLE_OWNER", "rawennedasilvaleite"))
     ap.add_argument("--code-slug", default="ap2-topicos-code")
     ap.add_argument("--shard", type=int, default=0)

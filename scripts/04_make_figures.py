@@ -120,7 +120,7 @@ def curves(res: Path, fig: Path):
 
 def gallery(cfg: dict, res: Path, fig: Path, k: int = 3):
     from pe_baseline.dicom_io import read_slice, window
-    from pe_baseline.preprocess import compute_masks, resize_hu
+    from pe_baseline.preprocess import compute_masks, peak_hu, resize_hu
 
     cfgf = json.load(open(res / "final_config.json"))
     pred = pd.read_csv(res / "test_predictions.csv")
@@ -142,8 +142,9 @@ def gallery(cfg: dict, res: Path, fig: Path, k: int = 3):
             s = sp[sp.StudyInstanceUID == ex.StudyInstanceUID].sort_values("score").iloc[-1]
             series = split.loc[split.StudyInstanceUID == ex.StudyInstanceUID, "SeriesInstanceUID"].iloc[0]
             path = data_path(cfg, cfg["data"]["train_dir"], ex.StudyInstanceUID, series, f"{s.SOPInstanceUID}.dcm")
-            hu = resize_hu(read_slice(path, tuple(pre["hu_clip"])).hu, pre["out_size"])
-            m = compute_masks(hu, pre)
+            hu_full = read_slice(path, tuple(pre["hu_clip"])).hu
+            hu = resize_hu(hu_full, pre["out_size"])
+            m = compute_masks(hu, pre, peak_hu(hu_full, pre["out_size"]))   # igual à extração
             ax.imshow(window(hu, *pre["windows"]["ctpa"]), cmap="gray")
             ax.contour(m.roi, levels=[0.5], colors="yellow", linewidths=0.6)
             ax.contour(m.defect, levels=[0.5], colors="red", linewidths=0.6)

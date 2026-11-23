@@ -1,0 +1,16 @@
+subgroup,n,metric,value
+central_pe,37,sensibilidade,0.4864864864864865
+leftsided_pe,127,sensibilidade,0.4566929133858268
+rightsided_pe,160,sensibilidade,0.4125
+chronic_pe,23,sensibilidade,0.34782608695652173
+acute_and_chronic_pe,9,sensibilidade,0.3333333333333333
+rv_lv_ratio_gte_1,83,sensibilidade,0.4819277108433735
+rv_lv_ratio_lt_1,103,sensibilidade,0.3786407766990291
+qa_motion=0,600,auc_roc,0.6246428756947692
+qa_motion=1,0,auc_roc,
+qa_contrast=0,600,auc_roc,0.6246428756947692
+qa_contrast=1,0,auc_roc,
+flow_artifact=0,583,auc_roc,0.6263373148072913
+flow_artifact=1,17,auc_roc,
+true_filling_defect_not_pe=0,595,auc_roc,0.6290705339485827
+true_filling_defect_not_pe=1,5,auc_roc,0.0

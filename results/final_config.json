@@ -1,0 +1,6 @@
+{
+  "best_family": "all",
+  "best_model": "logreg",
+  "best_slice_model": "lgbm",
+  "threshold": 0.5328762531280518
+}
