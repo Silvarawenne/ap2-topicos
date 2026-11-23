@@ -12,6 +12,9 @@ Os cortes de cada exame são ordenados por z e subamostrados com passo fixo
 """
 from __future__ import annotations
 
+import faulthandler
+import signal
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -29,6 +32,14 @@ from .preprocess import compute_masks, peak_hu, resize_hu
 
 META_KEEP = ["PatientID", "Manufacturer", "KVP", "SliceThickness", "pixel_spacing_row",
              "RescaleSlope", "RescaleIntercept", "WindowCenter", "WindowWidth", "Rows", "Columns"]
+
+
+class SliceTimeout(Exception):
+    pass
+
+
+def _on_alarm(signum, frame):
+    raise SliceTimeout("tempo limite por corte excedido")
 
 
 def slice_features(hu: np.ndarray, cfg: dict) -> dict:
@@ -62,8 +73,14 @@ def process_exam(study: str, exam_rows: pd.DataFrame, cfg: dict) -> list[dict]:
     exam_dir = data_path(cfg, cfg["data"]["train_dir"], study, series)
     chosen = select_slices(exam_rows, exam_dir, cfg["sample"]["slice_stride"])
     out = []
+    limit = int(cfg["preprocess"].get("slice_timeout_s", 90))
+    # Proteção contra corte que trava (observado no Kaggle): vira erro registrado, não bloco parado.
+    # faulthandler imprime a pilha se mesmo assim o processo ficar parado (diagnóstico no log).
+    faulthandler.dump_traceback_later(limit * 4, repeat=True, file=sys.stderr)
+    signal.signal(signal.SIGALRM, _on_alarm)
     for _, r in chosen.iterrows():
         try:
+            signal.alarm(limit)
             sl = read_slice(r["path"], tuple(cfg["preprocess"]["hu_clip"]))
             feats = slice_features(sl.hu, cfg)
             meta = {f"meta_{k}": sl.meta.get(k) for k in META_KEEP}
@@ -72,6 +89,9 @@ def process_exam(study: str, exam_rows: pd.DataFrame, cfg: dict) -> list[dict]:
                         "status": "ok", **meta, **feats})
         except Exception as exc:  # arquivo corrompido/ilegível: registrado, não silenciado
             out.append({STUDY: study, SOP: r[SOP], "status": f"error: {exc!r}"[:300]})
+        finally:
+            signal.alarm(0)
+    faulthandler.cancel_dump_traceback_later()
     return out
 
 
