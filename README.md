@@ -144,13 +144,60 @@ ocupa poucos dos cerca de 250 cortes.
 - **Falha de enchimento:** a máscara é uma heurística de HU e forma, não um detector de trombo;
   ainda marca candidatos no coração (trabéculas) e na borda do esterno.
 
+## 4.6 Resultados (3.000 exames, 370.388 cortes, 0 cortes ilegíveis)
+
+Tabelas completas em `results/RESULTS.md`; figuras em `results/figures/`. CV aninhada (5 × 3)
+sobre 2.400 exames de desenvolvimento; teste de 600 exames avaliado **uma única vez**.
+
+| Nível (teste, 600 exames) | AUC-ROC [IC95% bootstrap] | AUC-PR | Sens. | Espec. |
+|:--|:--|:--|:--|:--|
+| Trivial (prevalência) | 0,500 | 0,310 | 0,00 | 1,00 |
+| **Exame: todos os descritores + regressão logística** | **0,625 [0,577; 0,672]** | 0,414 [0,352; 0,492] | 0,43 | 0,75 |
+| Corte (LightGBM) → exame, pooling max | 0,559 [0,508; 0,607] | 0,364 | – | – |
+| Corte (LightGBM) → exame, pooling top-5 | 0,564 [0,512; 0,612] | 0,373 | – | – |
+
+**Leitura honesta dos números**
+
+- O baseline clássico tem sinal acima do acaso, mas **fraco** (AUC ≈ 0,63, IC95% não inclui 0,5).
+  É o piso que o TP2 precisa superar com folga para ser considerado ganho real.
+- Na CV, juntar as 4 famílias é a melhor opção (0,629 ± 0,030); isoladas ficam em 0,58–0,61
+  (textura ≈ intensidade ≈ gradiente > wavelet). LightGBM (0,628) e regressão logística (0,629)
+  empatam; **as diferenças entre os melhores modelos estão dentro do desvio entre dobras**
+  (≈ 0,03) e não foram testadas com teste pareado, então não afirmamos que um é melhor.
+- Ablações (melhor configuração): desbalanceamento (nenhum 0,630 / class_weight 0,629 /
+  SMOTE 0,623), pooling (mean 0,625 / mean+max 0,620 / completo 0,629) e ROI (com 0,621 / sem
+  0,619). Todas dentro do ruído: a ROI não melhorou a AUC (mudou apenas o equilíbrio
+  sensibilidade/especificidade para o mesmo limiar) e SMOTE não ajudou.
+- Importância por permutação (teste, queda de AUC): gradiente 0,069 > intensidade 0,036 ≈
+  textura 0,034 >> wavelet 0,001. Wavelet quase não contribui.
+- **Nível de corte:** AUC 0,84 na CV, mas **0,79 só em cortes torácicos**, porque parte do
+  desempenho vem do atalho de posição descrito em 4.5. A agregação para exame cai para ≈ 0,56–0,61,
+  pior que usar as características agregadas diretamente (0,63).
+- O limiar é escolhido por Youden nas predições internas da CV; no teste a sensibilidade (0,43)
+  ficou abaixo da CV (≈ 0,58), então o limiar não transfere perfeitamente.
+- Subgrupos (teste, sensibilidade): central 0,49, esquerdo 0,46, direito 0,41, crônico 0,35,
+  VD/VE ≥ 1 0,48 vs < 1 0,38. Os subgrupos têm 9 a 160 exames; os pequenos (crônico + agudo,
+  n = 9) são apenas indicativos. `qa_motion=1` e `qa_contrast=1` têm 0 exames na amostra de
+  teste (NaN), e `true_filling_defect_not_pe=1` tem 5 exames (AUC 0,000 não é interpretável:
+  só há uma classe de rótulo em cada grupo).
+- **Não verificado:** os 205 exames com `RescaleIntercept = 0` não tiveram o HU conferido; a
+  unidade amostral é o exame, e a independência entre exames (1 exame = 1 paciente) é uma
+  suposição, pois os DICOMs são anonimizados.
+
+**Incidentes de execução (registrados por transparência):** dois kernels do Kaggle travaram sem
+erro num bloco de extração (sem causa identificada), o que exigiu refazer esses exames em
+kernels menores; a extração ganhou um limite de tempo por corte e por exame (processo separado
+morto após 15 min, exame registrado como excluído). Nenhum exame precisou ser excluído, e as
+características dos exames refeitos vêm do mesmo código, exceto essa proteção.
+
 ## 5. Como reproduzir
 
 ### No Kaggle (recomendado: dados sem download)
 
 1. `notebooks/00_eda.ipynb`: EDA e geração da partição e da amostra (`splits/`).
-2. `notebooks/kaggle_01_extract.ipynb`: extração de características (CPU, cerca de 2–3 h,
-   retomável e divisível em *shards*). Use **Save Version** para a saída virar um Dataset.
+2. `notebooks/kaggle_01_extract.ipynb`: extração de características (CPU, ≈ 8,5 s por exame em 4 CPUs,
+   ou ≈ 7 h de CPU para 3.000 exames; divida em *shards* e rode em paralelo; até 5 sessões
+   de CPU simultâneas no Kaggle). Use **Save Version** para a saída virar um Dataset.
 3. `notebooks/kaggle_02_experiments.ipynb`: adicione esse Dataset como Input e rode. Ele gera
    `results/` (tabelas, `RESULTS.md` e figuras).
 
