@@ -1,8 +1,11 @@
 # Dados brutos e intermediários grandes NÃO vão para o repositório
-features/
+# (só a pasta features/ da raiz: src/pe_baseline/features/ é código e deve ser versionada)
+/features/
 *.dcm
 data/
 *.parquet
+# predições pequenas que as figuras e a galeria usam
+!results/*.parquet
 !results/**/*.csv
 __pycache__/
 *.pyc
