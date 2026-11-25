@@ -1,0 +1,7 @@
+# artefatos de compilação do LaTeX
+*.aux
+*.log
+*.bbl
+*.blg
+*.out
+*.toc

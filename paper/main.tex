@@ -1,0 +1,96 @@
+% Esqueleto do artigo do TP2 (G2, RSNA-STR Pulmonary Embolism Detection).
+% Template: IEEEtran, modo conference. NAO alterar margens, fonte nem espacamento (enunciado, Secao 8).
+% Limite: 4 paginas, referencias inclusas. Marcadores \pend{...} = a preencher com resultados reais.
+\documentclass[conference]{IEEEtran}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazilian]{babel}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+\newcommand{\pend}[1]{\textcolor{red}{[#1]}}
+
+\begin{document}
+
+\title{Transferência de Aprendizado, Aumento de Dados e Explicabilidade na Detecção de Embolia Pulmonar em Angiotomografia}
+
+\author{\IEEEauthorblockN{Rawenne da Silva Leite, Wheverson de Abreu Lima, João Victor do Nascimento Silva}
+\IEEEauthorblockA{Grupo G2 --- Tópicos Especiais em Sistemas de Informação\\
+Repositório: \url{https://github.com/silvarawenne/ap2-topicos}}}
+
+\maketitle
+
+\begin{abstract}
+\pend{Resumo em 150--200 palavras: problema (detecção de embolia pulmonar no RSNA-STR PE 2020), método (extratores congelados e ajuste fino de CNN, ViT, DINOv2 e modelo médico, com ablações de ajuste fino e de aumento de dados), principais números (AUC-ROC com IC95\%, contra o baseline clássico do TP1), explicabilidade e limitações. Escrever só depois dos resultados finais.}
+\end{abstract}
+
+\begin{IEEEkeywords}
+embolia pulmonar, transferência de aprendizado, DINOv2, explicabilidade, angiotomografia
+\end{IEEEkeywords}
+
+\section{Introdução}
+A embolia pulmonar (EP) é diagnosticada em angiotomografia de tórax pela falha de enchimento nas artérias pulmonares, achado pequeno e distribuído em poucos cortes do volume. O conjunto RSNA-STR PE~\cite{colak2021} reúne mais de 12\,000 exames anotados, o que viabiliza modelos profundos, mas o redimensionamento usual para $224\times224$ pode apagar o achado. Seguimos o desenho controlado de Menegola \textit{et al.}~\cite{menegola2017}, que isola fatores da transferência de aprendizado, e acrescentamos medidas de dispersão e testes de significância.
+
+\textbf{Perguntas de pesquisa.}
+\textbf{RQ1:} o ajuste fino é necessário, ou um classificador linear sobre representações congeladas basta?
+\textbf{RQ2:} pré-treino supervisionado (ImageNet) e auto-supervisionado (DINOv2) transferem de modo diferente?
+\textbf{RQ3:} CNNs e ViTs se comportam de forma distinta?
+\textbf{RQ4:} um pré-treino médico~\cite{mei2022} supera o pré-treino geral?
+\textbf{RQ5:} quanto a estratégia de ajuste fino e o aumento de dados explicam o ganho sobre o baseline clássico do TP1?
+\textbf{RQ6:} as regiões que sustentam as predições são clinicamente plausíveis, ou há atalhos?
+\pend{Ajustar a lista às perguntas que o grupo de fato responder.}
+
+\textbf{Trabalhos relacionados.}
+\pend{1 parágrafo: transferência em imagem médica~\cite{menegola2017,mei2022}; pré-treino auto-supervisionado~\cite{oquab2024} e ViTs~\cite{touvron2021}; ajuste fino por etapas e sondagem linear seguida de ajuste fino~\cite{howard2018,kumar2022}; atalhos em imagem médica~\cite{zech2018,degrave2021}. Incluir trabalhos específicos de EP em TC.}
+
+\section{Dados e Métodos}
+\textbf{Dados e avaliação.}
+\pend{Declarar o caso de avaliação (teste oficial por submissão tardia com comprovante, ou partição fixa por paciente do treino completo) e as contagens de pacientes, exames e imagens de treino, validação e teste. Listar arquivos excluídos. Os DICOMs são anonimizados, então a independência entre exames é uma suposição declarada.}
+Código, dependências com versões, sementes e pesos: \url{https://github.com/silvarawenne/ap2-topicos}.
+
+\textbf{Entrada.}
+\pend{Conversão para HU com \texttt{RescaleSlope}/\texttt{RescaleIntercept}; três janelas (CTPA, mediastino, pulmão) como canais; normalização do pré-treino; resolução e justificativa em função do tamanho do achado e do \textit{patch} do ViT; estratégia 2D com agregação por exame.}
+
+\textbf{Modelos e regimes.}
+\pend{ResNet~\cite{he2016} (supervisionada, ImageNet), DINOv2 ViT~\cite{oquab2024}, DeiT~\cite{touvron2021}, RadImageNet~\cite{mei2022}. Dois regimes: extrator congelado com classificador linear e ajuste fino. Hiperparâmetros, orçamento de treino igual entre configurações, parâmetros treináveis, tempo e hardware.}
+
+\textbf{Ajuste fino e aumento de dados.}
+\pend{Ablação de ajuste fino: taxa constante, com agendador, e descongelamento gradual ou taxas por camada~\cite{howard2018,kumar2022}. Política de aumento principal e alternativa, com a justificativa de preservação do rótulo de cada transformação.}
+
+\textbf{Estatística.}
+\pend{Três sementes por configuração (média e desvio); IC95\% por \textit{bootstrap} em nível de paciente; testes pareados de DeLong~\cite{delong1988} ou \textit{bootstrap} pareado nas comparações centrais; subgrupo(s) de análise estratificada.}
+
+\textbf{Explicabilidade.}
+\pend{Grad-CAM~\cite{selvaraju2017} e Integrated Gradients~\cite{sundararajan2017}; critério de seleção dos exemplos definido antes de ver os mapas; teste de sanidade por randomização de pesos~\cite{adebayo2018}; mapas comparados entre a melhor CNN, o melhor ViT e um modelo congelado.}
+
+\section{Resultados e Discussão}
+\begin{table}[t]
+\centering
+\caption{\pend{Desempenho no conjunto de avaliação (AUC-ROC, média $\pm$ desvio em 3 sementes, IC95\% por \textit{bootstrap} por paciente). As linhas do TP1 são retreinadas no treino completo.}}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+Modelo & Regime & AUC-ROC & IC95\% \\
+\midrule
+Trivial (TP1) & --- & \pend{--} & \pend{--} \\
+Clássico (TP1) & descritores & \pend{--} & \pend{--} \\
+CNN supervisionada & congelado / ajuste fino & \pend{--} & \pend{--} \\
+DINOv2 ViT & congelado / ajuste fino & \pend{--} & \pend{--} \\
+RadImageNet & ajuste fino & \pend{--} & \pend{--} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\pend{Tabela principal organizada pelos fatores; ablações de ajuste fino e de aumento de dados; análise estratificada; figura de explicabilidade com os casos selecionados pelo critério declarado; análise de erro articulada com os mapas; descrever como ruído as diferenças sem suporte estatístico.}
+
+\section{Conclusão}
+\pend{Respostas às perguntas de pesquisa, com a força da evidência, e limitações (sem leitura radiológica; suposição de um exame por paciente; escolha de resolução).}
+
+\section*{Uso de IA generativa}
+\pend{O grupo deve conferir e ajustar esta nota antes de entregar. Rascunho: ferramentas de IA generativa (Claude Code) foram usadas como apoio na escrita do código de extração, treino e avaliação, na organização do repositório e no esqueleto deste artigo. As referências foram conferidas contra a fonte original pelos autores. O texto e os resultados finais foram verificados pelo grupo.}
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}
