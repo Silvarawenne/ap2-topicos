@@ -25,8 +25,19 @@ sample:
   n_test_exams: 600   # retirados de test       -> avaliação final, uma única vez
   slice_stride: 2     # usa 1 a cada 2 cortes de cada exame (ordenados por z)
 
+full:
+  # TP2: treino oficial COMPLETO + teste oficial (submissão tardia), TODOS os cortes.
+  # Uma única leitura de cada DICOM gera as características do TP1 (para retreinar o baseline)
+  # e o volume uint8 256x256 na janela CTPA (entrada das redes). Ver src/pe_baseline/extract.py.
+  out_dir: features_full
+  slice_stride: 1
+  test_csv: test.csv
+  test_dir: test
+  volume_window: ctpa           # 1 canal; as redes montam 3 canais com cortes adjacentes (2.5D)
+  exam_timeout_s: 2400          # exames com todos os cortes (até ~1.000) levam ~2x mais que no TP1
+
 preprocess:
-  out_size: 256                 # 512 -> 256 px (~1.4 mm/px); ver README
+  out_size: 256                # 512 -> 256 px (~1.4 mm/px); ver README
   hu_clip: [-1024, 3071]
   windows:                      # (nível, largura) em HU
     ctpa: [100, 700]            # janela de angio-TC pulmonar

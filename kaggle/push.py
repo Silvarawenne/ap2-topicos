@@ -5,6 +5,8 @@ Pré-requisito: CLI do Kaggle autenticada (token em ~/.kaggle ou KAGGLE_API_TOKE
   python kaggle/push.py code                          # cria/atualiza o Dataset <user>/ap2-topicos-code
   python kaggle/push.py kernel smoke --limit 20
   python kaggle/push.py kernel extract --shard 0 --n-shards 1
+  python kaggle/push.py kernel extract_full --shard 0 --n-shards 10   # TP2 (repita para 0..9)
+  python kaggle/push.py kernel extract_full --limit 3                 # TP2: teste rápido
   python kaggle/push.py kernel experiments --features-kernel <user>/tp1-extract-s0
   kaggle kernels status <user>/<slug>  |  kaggle kernels output <user>/<slug> -p out/
 """
@@ -47,7 +49,10 @@ def push_code(user: str, slug: str):
 
 
 def push_kernel(user, stage, code_slug, shard, n_shards, limit, features_kernels, gpu):
-    slug = f"tp1-{stage}" + (f"-s{shard}" if stage == "extract" else "")
+    if stage == "extract_full":
+        slug = f"tp2-extract-s{shard}" + ("-smoke" if limit else "")
+    else:
+        slug = f"tp1-{stage}" + (f"-s{shard}" if stage == "extract" else "")
     src = (ROOT / "kaggle" / "kernel_runner.py").read_text()
     src = (src.replace("__STAGE__", stage).replace("__SHARD__", str(shard))
               .replace("__N_SHARDS__", str(n_shards)).replace("__LIMIT__", str(limit or "")))
@@ -67,7 +72,7 @@ def push_kernel(user, stage, code_slug, shard, n_shards, limit, features_kernels
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["code", "kernel"])
-    ap.add_argument("stage", nargs="?", choices=["smoke", "eda", "extract", "experiments", "gallery"])
+    ap.add_argument("stage", nargs="?", choices=["smoke", "eda", "extract", "extract_full", "experiments", "gallery"])
     ap.add_argument("--user", default=os.environ.get("KAGGLE_OWNER", "rawennedasilvaleite"))
     ap.add_argument("--code-slug", default="ap2-topicos-code")
     ap.add_argument("--shard", type=int, default=0)

@@ -4,6 +4,7 @@ Uso dentro do kernel (o estágio vem da variável STAGE no topo, preenchida por 
   smoke        extração de poucos exames (mede tempo real por exame)
   eda          EDA completa (cabeçalhos DICOM de todos os exames)
   extract      extração de características (aceita SHARD/N_SHARDS)
+  extract_full TP2: treino completo + teste oficial, todos os cortes, características + volumes npz
   gallery      galeria de acertos/erros do teste (lê results/ do dataset de código + DICOMs)
   experiments  experimentos + figuras (lê as características da saída do kernel de extração)
 
@@ -102,6 +103,17 @@ elif STAGE == "extract":
     sh(f"{sys.executable} scripts/01_make_split_and_sample.py")
     sh(f"{sys.executable} -W ignore scripts/02_extract_features.py --shard {SHARD} --n-shards {N_SHARDS}")
     shutil.copytree("splits", f"{WORK}/features/splits", dirs_exist_ok=True)
+
+elif STAGE == "extract_full":
+    # TP2: treino completo + teste oficial, todos os cortes; características + volumes npz.
+    out = f"{WORK}/features_full"
+    os.environ["PE_FEATURES_DIR"] = out
+    sh(f"{sys.executable} scripts/01_make_split_and_sample.py")
+    extra = f"--limit {LIMIT} --chunk-size 5" if LIMIT else ""
+    sh(f"{sys.executable} -W ignore scripts/02_extract_features.py --full --shard {SHARD} "
+       f"--n-shards {N_SHARDS} --out-dir {out}/slices {extra}")
+    shutil.copytree("splits", f"{out}/splits", dirs_exist_ok=True)
+    sh(f"du -sh {out}; ls {out}/slices | wc -l", check=False)
 
 elif STAGE == "experiments":
     feats = [p.rsplit("/slices", 1)[0] for p in glob.glob("/kaggle/input/**/slices", recursive=True)]
