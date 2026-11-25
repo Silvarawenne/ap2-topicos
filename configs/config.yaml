@@ -36,8 +36,34 @@ full:
   volume_window: ctpa           # 1 canal; as redes montam 3 canais com cortes adjacentes (2.5D)
   exam_timeout_s: 2400          # exames com todos os cortes (até ~1.000) levam ~2x mais que no TP1
 
+tp2:
+  # Redes (scripts/10_tp2.py). Entradas: saídas da extração completa (pastas com volumes_*.npz)
+  # achadas sob `inputs` (ou PE_TP2_INPUTS); saídas em `out_dir` (ou PE_TP2_OUT).
+  inputs: /kaggle/input
+  out_dir: runs
+  exclude_indeterminate: true   # mesma regra do TP1 (sem verdade binária)
+  offset: 1                     # canais 2.5D = cortes [i-1, i, i+1]
+  topk: 5                       # exame = média das 5 maiores probabilidades de corte (TP1)
+  neg_ratio: 3                  # por época: todos os positivos + 3x negativos sorteados
+  epochs: 4                     # ajustar após o benchmark de vazão
+  batch_size: 64
+  eval_batch_size: 256
+  num_workers: 4
+  lr: {cnn: 3.0e-4, vit: 1.0e-4}
+  weight_decay: 0.05
+  warmup_frac: 0.05
+  llrd_decay: 0.75
+  drop_path: 0.1                # stochastic depth nos ViTs
+  seeds: [0, 1, 2]
+  probe:
+    epochs: 4
+    lr: 1.0e-3
+    batch_size: 8192
+    weight_decays: [1.0e-4, 1.0e-3, 1.0e-2]   # escolhido na validação (semente 0)
+  n_bootstrap: 2000
+
 preprocess:
-  out_size: 256                # 512 -> 256 px (~1.4 mm/px); ver README
+  out_size: 256               # 512 -> 256 px (~1.4 mm/px); ver README
   hu_clip: [-1024, 3071]
   windows:                      # (nível, largura) em HU
     ctpa: [100, 700]            # janela de angio-TC pulmonar
