@@ -79,15 +79,22 @@ def test_epoch_sampling_keeps_all_positives(world):
     p0, p1 = ds.plan(), (ds.set_epoch(0), ds.plan())[1]
     assert [len(a[2]) for a in p0] != [] and p1 is not None
     x, _ = next(iter(ds))
-    assert x.shape == (3, 256, 256) and x.dtype == torch.float16
+    assert x.shape == (3, 256, 256) and x.dtype == torch.uint8
 
 
 def test_augment_policies_shape():
     from pe_tp2 import augment
-    x = torch.randint(0, 255, (3, 256, 256), dtype=torch.uint8)
-    for pol in ("none", "main", "strong"):
+    assert augment.build("none") is None
+    x = augment.to_float(torch.randint(0, 256, (6, 3, 64, 64), dtype=torch.uint8))
+    assert 0 <= x.min() and x.max() <= 1
+    torch.manual_seed(0)
+    for pol in ("main", "strong"):
         y = augment.build(pol)(x)
         assert y.shape == x.shape and y.dtype == torch.float32 and 0 <= y.min() and y.max() <= 1
+        assert not torch.equal(y, x)
+    # sem sorteio (amplitudes zero) o afim é a identidade
+    ident = augment.GpuAugment()(x)
+    assert torch.allclose(ident, x, atol=1e-5)
 
 
 def test_param_groups_llrd():
@@ -130,3 +137,15 @@ def test_script_end_to_end(world, cmd):
     ex = pd.read_csv(last / "exam_official_test.csv")
     assert len(ex) == 3 and (ex["pe"] == -1).all()
     assert (last / "slices_official_test.parquet").exists()
+
+
+def test_bench_runs(world):
+    root, _ = world
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "10_tp2.py"), "bench", "--models", "resnet50",
+                        "--steps", "1", "--loader-slices", "4", "--config", str(root / "cfg.yaml"),
+                        "--no-pretrained"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-3000:]
+    b = pd.read_csv(root / "runs" / "bench" / "bench.csv")
+    for c in ("train_img_s", "aug_strong_img_s", "loader_train_img_s", "loader_eval_img_s",
+              "raw_read_MBps", "min_per_epoch_full"):
+        assert c in b.columns, c

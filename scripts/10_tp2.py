@@ -99,26 +99,100 @@ def cmd_counts(args):
     print(c.to_string())
 
 
+def _sysinfo(t) -> dict:
+    import shutil
+    info = {"cpus": os.cpu_count()}
+    try:
+        with open("/proc/meminfo") as f:
+            info["ram_gb"] = round(int(f.readline().split()[1]) / 2**20, 1)
+    except OSError:
+        pass
+    for p in ("/kaggle/working", "/tmp", str(repo_path(t["out_dir"]))):
+        if os.path.exists(p):
+            info[f"free_gb[{p}]"] = round(shutil.disk_usage(p).free / 2**30, 1)
+    return info
+
+
+def _io_probe(idx, n_exams=8) -> dict:
+    """Leitura dos volumes: sequencial crua (arquivo ainda não lido) e np.load por exame,
+    a frio e a quente (cache do SO). Separa gargalo de disco/rede de gargalo de CPU."""
+    from pe_tp2.data import VolumeCache
+    files = sorted(idx.loc[idx["ok"], "vol_path"].unique())
+    out = {"npz_files": len(files)}
+    if len(files) < 2:
+        return out
+    a, b = files[len(files) // 2], files[-1]
+    t0, n = time.time(), 0
+    with open(a, "rb") as f:
+        while n < 1 << 30:
+            chunk = f.read(16 << 20)
+            if not chunk:
+                break
+            n += len(chunk)
+    out["raw_read_MBps"] = n / 1e6 / max(time.time() - t0, 1e-9)
+    studies = idx.loc[idx["vol_path"] == b, "StudyInstanceUID"].unique()[:n_exams]
+    for tag in ("cold", "warm"):
+        t0 = time.time()
+        for s in studies:
+            VolumeCache(1).get(b, s)
+        out[f"npz_exam_s_{tag}"] = (time.time() - t0) / max(len(studies), 1)
+    return out
+
+
+def _loader_rate(ds, t, n_slices, skip) -> tuple[float, float]:
+    """(cortes/s em regime, s até o 1o lote): descarta os `skip` primeiros (enchimento)."""
+    from pe_tp2.data import loader
+    t_start = time.time()
+    t_first = t0 = None
+    n = 0
+    for xb, _ in loader(ds, t["batch_size"], t["num_workers"]):
+        if t_first is None:
+            t_first = time.time() - t_start
+        n += len(xb)
+        if t0 is None and n >= skip:
+            t0, n0 = time.time(), n
+        if t0 is not None and n - n0 >= n_slices:
+            break
+    if t0 is None:
+        return float("nan"), t_first or float("nan")
+    return (n - n0) / max(time.time() - t0, 1e-9), t_first
+
+
 def cmd_bench(args):
-    """Vazão por modelo: treino e inferência só na GPU (entrada sintética) e leitura real."""
+    """Vazão: (1) GPU, por modelo, com entrada sintética uint8 + aumento 'main' na GPU;
+    (2) custo do aumento na GPU; (3) leitura real: disco, workers no treino e na avaliação."""
     import torch
     from pe_tp2 import augment
-    from pe_tp2.data import TrainSlices, loader
+    from pe_tp2.data import EvalSlices, TrainSlices
     from pe_tp2.engine import _autocast, device
     from pe_tp2.models import Net
     cfg, t = tp2_cfg(args)
     dev = device()
+    sysinfo = _sysinfo(t)
+    print(sysinfo, flush=True)
+    sync = torch.cuda.synchronize if dev.type == "cuda" else (lambda: None)
+    xb = torch.randint(0, 256, (t["batch_size"], 3, 256, 256), dtype=torch.uint8, device=dev)
+    aug_rates = {}
+    for pol in ("main", "strong"):
+        tf = augment.build(pol)
+        tf(augment.to_float(xb))
+        sync()
+        t0 = time.time()
+        for _ in range(args.steps):
+            tf(augment.to_float(xb))
+        sync()
+        aug_rates[f"aug_{pol}_img_s"] = args.steps * len(xb) / (time.time() - t0)
+    print(aug_rates, flush=True)
     rows = []
+    tf = augment.build("main")
     for name in args.models:
         model = Net(name, pretrained=not args.no_pretrained).to(dev)
-        if model.family == "cnn":
-            model = model.to(memory_format=torch.channels_last)
         opt = torch.optim.AdamW(model.parameters(), lr=1e-4)
         scaler = torch.amp.GradScaler(enabled=dev.type == "cuda")
-        x = torch.rand(t["batch_size"], 3, 256, 256, device=dev).half()
         y = torch.randint(0, 2, (t["batch_size"],), device=dev).float()
 
         def step():
+            x = tf(augment.to_float(xb))
             with _autocast(dev):
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(model(x).float(), y)
             opt.zero_grad()
@@ -128,25 +202,21 @@ def cmd_bench(args):
 
         for _ in range(3):
             step()
-        if dev.type == "cuda":
-            torch.cuda.synchronize()
+        sync()
         t0 = time.time()
         for _ in range(args.steps):
             step()
-        if dev.type == "cuda":
-            torch.cuda.synchronize()
+        sync()
         train_ips = args.steps * t["batch_size"] / (time.time() - t0)
         model.eval()
-        xe = torch.rand(t["eval_batch_size"], 3, 256, 256, device=dev).half()
+        xe = torch.randint(0, 256, (t["eval_batch_size"], 3, 256, 256), dtype=torch.uint8, device=dev)
         with torch.inference_mode(), _autocast(dev):
-            model(xe)
-            if dev.type == "cuda":
-                torch.cuda.synchronize()
+            model.features(augment.to_float(xe))
+            sync()
             t0 = time.time()
             for _ in range(args.steps):
-                model(xe)
-            if dev.type == "cuda":
-                torch.cuda.synchronize()
+                model.features(augment.to_float(xe))
+            sync()
         infer_ips = args.steps * t["eval_batch_size"] / (time.time() - t0)
         mem = torch.cuda.max_memory_allocated() / 2**30 if dev.type == "cuda" else 0
         rows.append({"model": name, "train_img_s": train_ips, "infer_img_s": infer_ips, "gpu_mem_gb": mem})
@@ -155,27 +225,33 @@ def cmd_bench(args):
         if dev.type == "cuda":
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
-    # leitura real (CPU): quantos cortes 2.5D aumentados por segundo os workers entregam
+    df = pd.DataFrame(rows)
+    read = {}
     try:
         idx = get_index(cfg, t)
-        ds = TrainSlices(idx[idx["split"] == "train"], t["neg_ratio"], 0, augment.build("main"), t["offset"])
-        t0, n = time.time(), 0
-        for xb, _ in loader(ds, t["batch_size"], t["num_workers"]):
-            n += len(xb)
-            if n >= args.loader_slices:
-                break
-        load_ips = n / (time.time() - t0)
-        print({"loader_img_s": load_ips, "slices_per_epoch": len(ds)}, flush=True)
-        for r in rows:
-            r.update(loader_img_s=load_ips, slices_per_epoch=len(ds))
+        read.update(_io_probe(idx))
+        print(read, flush=True)
+        tr = TrainSlices(idx[idx["split"] == "train"], t["neg_ratio"], 0, t["offset"])
+        skip = min(4 * t["batch_size"] * max(t["num_workers"], 1), args.loader_slices)
+        read["loader_train_img_s"], read["loader_train_first_batch_s"] = _loader_rate(
+            tr, t, args.loader_slices, skip + tr.buffer * max(t["num_workers"], 1))
+        ev = EvalSlices(idx[idx["split"] == "val"])
+        read["loader_eval_img_s"], _ = _loader_rate(ev, t, args.loader_slices, skip)
+        read["slices_per_epoch_this_input"] = len(tr)
+        print(read, flush=True)
+        # época estimada para o treino inteiro (este input pode ser só parte dos shards)
+        n_train_ex = idx.loc[idx["split"] == "train", "StudyInstanceUID"].nunique()
+        sp = pd.read_csv(repo_path(cfg["split"]["file"]))
+        n_all = int(((sp["split"] == "train") & (sp["label3"] != "indeterminate")).sum())
+        frac = n_train_ex / n_all
+        full_epoch = len(tr) / max(frac, 1e-9)
+        eff = np.minimum(df["train_img_s"], read["loader_train_img_s"])
+        df["min_per_epoch_full"] = full_epoch / eff / 60
+        df["est_slices_per_epoch_full"] = int(full_epoch)
     except FileNotFoundError as e:
         print("sem volumes para medir a leitura:", e)
-    df = pd.DataFrame(rows)
-    if "slices_per_epoch" in df:
-        eff = np.minimum(df["train_img_s"], df["loader_img_s"])
-        df["min_per_epoch"] = df["slices_per_epoch"] / eff / 60
     d = out_dir(t, "bench")
-    df.assign(**env_info()).to_csv(d / "bench.csv", index=False)
+    df.assign(**env_info(), **sysinfo, **aug_rates, **read).to_csv(d / "bench.csv", index=False)
     print(df.to_string())
 
 
@@ -309,7 +385,7 @@ def main():
     ap.add_argument("--neg-ratio", type=float, default=None)
     ap.add_argument("--max-steps", type=int, default=None, help="limite de passos por época (teste)")
     ap.add_argument("--steps", type=int, default=20, help="bench: passos medidos")
-    ap.add_argument("--loader-slices", type=int, default=5000, help="bench: cortes lidos")
+    ap.add_argument("--loader-slices", type=int, default=8000, help="bench: cortes lidos (em regime)")
     ap.add_argument("--sequential", action="store_true")
     ap.add_argument("--no-pretrained", action="store_true", help="só para testes sem internet")
     args = ap.parse_args()

@@ -65,10 +65,13 @@ def exam_groups(idx: pd.DataFrame) -> list[tuple[str, str, np.ndarray, np.ndarra
 
 
 class TrainSlices(IterableDataset):
-    def __init__(self, idx: pd.DataFrame, neg_ratio: float, seed: int, transform=None,
-                 offset: int = 1, buffer: int = 1024):
+    """Devolve (pilha 2.5D uint8 (3, H, W), rótulo). Conversão para float e aumento de dados
+    são feitos na GPU, em lote (augment.py)."""
+
+    def __init__(self, idx: pd.DataFrame, neg_ratio: float, seed: int, offset: int = 1,
+                 buffer: int = 1024):
         self.groups = exam_groups(idx)
-        self.neg_ratio, self.seed, self.transform = neg_ratio, seed, transform
+        self.neg_ratio, self.seed = neg_ratio, seed
         self.offset, self.buffer, self.epoch = offset, buffer, 0
         self.n_pos = int(sum((g[3] == 1).sum() for g in self.groups))
         self.n_neg_total = int(sum((g[3] == 0).sum() for g in self.groups))
@@ -100,8 +103,7 @@ class TrainSlices(IterableDataset):
             vol = cache.get(path, study)
             for i, lab in zip(vidx, y):
                 x = torch.from_numpy(stack25d(vol, int(i), self.offset))
-                x = self.transform(x) if self.transform else x.float().div_(255)
-                buf.append((x.half(), torch.tensor(float(lab))))
+                buf.append((x, torch.tensor(float(lab))))
                 if len(buf) >= self.buffer:
                     yield buf.pop(int(rng.integers(len(buf))))
         rng.shuffle(buf)
@@ -109,7 +111,7 @@ class TrainSlices(IterableDataset):
 
 
 class EvalSlices(IterableDataset):
-    """Todos os cortes válidos dos exames dados; devolve (x, posição no índice)."""
+    """Todos os cortes válidos dos exames dados; devolve (x uint8, posição no índice)."""
 
     def __init__(self, idx: pd.DataFrame, offset: int = 1):
         self.groups, self.offset = exam_groups(idx), offset
@@ -123,8 +125,7 @@ class EvalSlices(IterableDataset):
         for study, path, vidx, _, pos in _worker_share(self.groups):
             vol = cache.get(path, study)
             for i, p in zip(vidx, pos):
-                x = torch.from_numpy(stack25d(vol, int(i), self.offset)).float().div_(255)
-                yield x.half(), int(p)
+                yield torch.from_numpy(stack25d(vol, int(i), self.offset)), int(p)
 
 
 def loader(ds, batch_size: int, num_workers: int):

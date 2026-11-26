@@ -77,6 +77,8 @@ class Net(nn.Module):
         self.register_buffer("std", torch.tensor(std).view(1, 3, 1, 1), persistent=False)
         self.name, self.img, self.family = name, spec["img"], spec["family"]
         self.head = nn.Linear(self.backbone.num_features, 1)
+        if self.family == "cnn":                       # mais rápido com AMP (tensor cores)
+            self.backbone = self.backbone.to(memory_format=torch.channels_last)
 
     def prep(self, x):
         x = x.float()

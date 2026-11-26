@@ -47,7 +47,7 @@ def predict(model: Net, idx: pd.DataFrame, batch_size: int, workers: int, offset
     pos_all, out = [], []
     for x, pos in loader(ds, batch_size, workers):
         with _autocast(dev):
-            x = x.to(dev, non_blocking=True)
+            x = augment.to_float(x.to(dev, non_blocking=True))
             y = model.features(x) if features else torch.sigmoid(model(x).float())
         out.append(y.float().cpu().numpy().astype(np.float16 if features else np.float32))
         pos_all.append(pos.numpy())
@@ -82,7 +82,8 @@ def fit(model: Net, idx: pd.DataFrame, cfg: dict, strategy: str, aug: str, seed:
     dev = next(model.parameters()).device
     torch.manual_seed(seed)
     tr_idx, va_idx = idx[idx["split"] == "train"], idx[idx["split"] == "val"]
-    ds = TrainSlices(tr_idx, cfg["neg_ratio"], seed, augment.build(aug), cfg["offset"])
+    ds = TrainSlices(tr_idx, cfg["neg_ratio"], seed, cfg["offset"])
+    tf = augment.build(aug)
     steps = steps_per_epoch(ds, cfg["batch_size"])
     lr = cfg["lr"][model.family]
     groups = param_groups(model, lr, cfg["weight_decay"],
@@ -109,7 +110,9 @@ def fit(model: Net, idx: pd.DataFrame, cfg: dict, strategy: str, aug: str, seed:
         model.train()
         t0, n_seen, loss_sum = time.time(), 0, 0.0
         for x, y in loader(ds, cfg["batch_size"], cfg["num_workers"]):
-            x, y = x.to(dev, non_blocking=True), y.to(dev, non_blocking=True)
+            x, y = augment.to_float(x.to(dev, non_blocking=True)), y.to(dev, non_blocking=True)
+            if tf is not None:
+                x = tf(x)
             with _autocast(dev):
                 loss = F.binary_cross_entropy_with_logits(model(x).float(), y)
             opt.zero_grad(set_to_none=True)
