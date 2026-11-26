@@ -149,3 +149,33 @@ def test_bench_runs(world):
     for c in ("train_img_s", "aug_strong_img_s", "loader_train_img_s", "loader_eval_img_s",
               "raw_read_MBps", "min_per_epoch_full"):
         assert c in b.columns, c
+
+
+def test_queue_runs_mixed_jobs(world):
+    root, _ = world
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "10_tp2.py"), "queue", "--jobs",
+                        "frozen:deit_s", "ft:resnet50:const:none:2", "--max-steps", "1",
+                        "--config", str(root / "cfg.yaml"), "--no-pretrained"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "falhas: nenhuma" in r.stdout
+    assert (root / "runs" / "ft_resnet50_const_none_s2" / "metrics.json").exists()
+    assert (root / "runs" / "logs" / "frozen_deit_s.log").exists()
+    bad = subprocess.run([sys.executable, str(ROOT / "scripts" / "10_tp2.py"), "queue", "--jobs", "ft:x",
+                          "--config", str(root / "cfg.yaml")], capture_output=True, text=True)
+    assert bad.returncode != 0 and "tarefa inválida" in bad.stderr
+
+
+def test_radimagenet_sequential_state_dict(tmp_path, monkeypatch):
+    """Formato do código oficial: nn.Sequential(children[:9]) dentro de 'backbone.' -> conv1/layer1..."""
+    import torchvision
+    from pe_tp2.models import Net
+    ref = torchvision.models.resnet50()
+    seq = torch.nn.Sequential(*list(ref.children())[:9])
+    sd = {f"backbone.{k}": v for k, v in seq.state_dict().items()}
+    path = tmp_path / "rin.pt"
+    torch.save(sd, path)
+    monkeypatch.setenv("RADIMAGENET_WEIGHTS", str(path))
+    m = Net("radimagenet_resnet50", pretrained=True)
+    assert m.load_info["loaded"] == m.load_info["total"]
+    assert torch.equal(m.backbone.layer4[2].conv3.weight, ref.layer4[2].conv3.weight)
+    assert torch.allclose(m.mean, torch.full_like(m.mean, 0.5))

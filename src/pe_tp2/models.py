@@ -23,24 +23,34 @@ SPECS = {
                    pretrain="ImageNet-1k (supervisionado)", vit_kw=True),
     "dinov2_s": dict(timm="vit_small_patch14_dinov2.lvd142m", img=252, family="vit",
                      pretrain="LVD-142M (auto-supervisionado, DINOv2)", vit_kw=True),
-    # pesos RadImageNet (ResNet-50, PyTorch) num arquivo local: variável RADIMAGENET_WEIGHTS
+    # RadImageNet (Mei et al., 2022), ResNet-50 em PyTorch. Arquivo local em RADIMAGENET_WEIGHTS ou,
+    # sem ela, baixado do espelho no Hugging Face numa revisão fixa (o SHA-256 vai para o run.json).
+    # Pré-processamento do código de treino oficial (pytorch_example.ipynb): (x - 127,5) * 2 / 255,
+    # isto é, [0,1] -> [-1,1] (média 0,5, desvio 0,5), sem a normalização do ImageNet.
     "radimagenet_resnet50": dict(timm="resnet50", img=256, family="cnn", pretrain="RadImageNet (TC/RM/US)",
-                                 local_weights="RADIMAGENET_WEIGHTS"),
+                                 local_weights="RADIMAGENET_WEIGHTS", mean=(0.5,) * 3, std=(0.5,) * 3,
+                                 hf=("Lab-Rasool/RadImageNet", "ResNet50.pt",
+                                     "1c94f2700886f822c953989255e039352fba6c56")),
 }
+# filhos de torchvision.resnet50 por índice (o código oficial salva nn.Sequential(children[:9]))
+_CHILD = {"0": "conv1", "1": "bn1", "4": "layer1", "5": "layer2", "6": "layer3", "7": "layer4"}
 IMAGENET_MEAN, IMAGENET_STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
 
 
 def _load_local_resnet(model: nn.Module, path: str) -> dict:
     """Carrega um state_dict de ResNet-50 com nomes no padrão torchvision/timm (conv1, bn1,
     layer1..4), tolerando prefixos ('module.', 'backbone.', 'model.', 'encoder.')."""
-    sd = torch.load(path, map_location="cpu", weights_only=False)
+    sd = torch.load(path, map_location="cpu", weights_only=True)   # só tensores (sem pickle arbitrário)
     if isinstance(sd, dict) and "state_dict" in sd:
         sd = sd["state_dict"]
-    if isinstance(sd, nn.Module):
-        sd = sd.state_dict()
     clean = {}
     for k, v in sd.items():
         k = re.sub(r"^(module\.|backbone\.|model\.|encoder\.)+", "", k)
+        m = re.match(r"^(\d+)\.(.*)$", k)
+        if m:                                       # formato nn.Sequential: '4.0.conv1.weight'
+            if m.group(1) not in _CHILD:
+                continue
+            k = f"{_CHILD[m.group(1)]}.{m.group(2)}"
         if k.startswith(("fc.", "classifier.", "head.")):
             continue
         clean[k] = v
@@ -50,7 +60,21 @@ def _load_local_resnet(model: nn.Module, path: str) -> dict:
     if loaded < 0.95 * n_model:
         raise RuntimeError(f"pesos locais incompatíveis: {loaded}/{n_model} tensores carregados; "
                            f"exemplos faltando: {res.missing_keys[:5]}")
-    return {"loaded": loaded, "total": n_model, "unexpected": len(res.unexpected_keys)}
+    import hashlib
+    sha = hashlib.sha256(open(path, "rb").read()).hexdigest()
+    return {"loaded": loaded, "total": n_model, "unexpected": len(res.unexpected_keys), "sha256": sha,
+            "path": str(path)}
+
+
+def _local_weights_path(spec) -> str:
+    path = os.environ.get(spec["local_weights"])
+    if path:
+        return path
+    if "hf" in spec:
+        from huggingface_hub import hf_hub_download
+        repo, fname, rev = spec["hf"]
+        return hf_hub_download(repo_id=repo, filename=fname, revision=rev)
+    raise RuntimeError(f"defina {spec['local_weights']} com o caminho dos pesos")
 
 
 class Net(nn.Module):
@@ -67,12 +91,10 @@ class Net(nn.Module):
         self.backbone = timm.create_model(spec["timm"], pretrained=use_hub, **kw)
         self.load_info = None
         if pretrained and spec.get("local_weights"):
-            path = os.environ.get(spec["local_weights"])
-            if not path:
-                raise RuntimeError(f"defina {spec['local_weights']} com o caminho dos pesos")
-            self.load_info = _load_local_resnet(self.backbone, path)
+            self.load_info = _load_local_resnet(self.backbone, _local_weights_path(spec))
         cfg = getattr(self.backbone, "pretrained_cfg", {}) or {}
-        mean, std = cfg.get("mean", IMAGENET_MEAN), cfg.get("std", IMAGENET_STD)
+        mean = spec.get("mean") or cfg.get("mean", IMAGENET_MEAN)
+        std = spec.get("std") or cfg.get("std", IMAGENET_STD)
         self.register_buffer("mean", torch.tensor(mean).view(1, 3, 1, 1), persistent=False)
         self.register_buffer("std", torch.tensor(std).view(1, 3, 1, 1), persistent=False)
         self.name, self.img, self.family = name, spec["img"], spec["family"]

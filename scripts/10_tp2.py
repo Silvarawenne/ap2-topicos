@@ -5,7 +5,10 @@
   python scripts/10_tp2.py frozen --model resnet50        # embeddings + sonda linear, 3 sementes
   python scripts/10_tp2.py finetune --model resnet50 --strategy cosine --aug main --seeds 0 1 2
 
-Com 2 GPUs (Kaggle T4 x2), `finetune` roda duas sementes em paralelo, uma por GPU.
+  python scripts/10_tp2.py queue --jobs frozen:resnet50 ft:resnet50:cosine:main:0 ...
+
+`queue` (e `finetune` com várias sementes) roda uma tarefa por GPU ao mesmo tempo (Kaggle T4 x2:
+duas em paralelo; a próxima entra assim que uma GPU libera). Log de cada tarefa em <out>/logs/.
 Cada execução grava em <out_dir>/<nome>/: history.csv, run.json, metrics.json,
 exam_{val,test,official_test}.csv, slices_{test,official_test}.parquet e os pesos.
 """
@@ -287,7 +290,7 @@ def cmd_frozen(args):
         torch.save({"model": args.model, "head_w": w.half(), "head_b": b.half()}, d / "head.pt")
         extra = {"regime": "frozen", "model": args.model, "seed": seed, "probe_wd": wd,
                  "probe_val_auc_by_wd": sel, "embed_seconds": t_embed, "probe_seconds": time.time() - t1,
-                 "trainable_params": int(w.numel() + 1), **env_info()}
+                 "trainable_params": int(w.numel() + 1), "load_info": model.load_info, **env_info()}
         m = save_eval(d, idx, t, preds, extra)
         (d / "run.json").write_text(json.dumps(extra, indent=2, default=float))
         print(name, "AUC teste =", round(m["test"]["auc_roc"], 4), flush=True)
@@ -334,45 +337,84 @@ def run_finetune_one(args, seed: int):
     log(f"AUC teste = {m['test']['auc_roc']:.4f} (época {info['best_epoch']})")
 
 
-def cmd_finetune(args):
+def _job_cmd(args, job: str, workers: int) -> list[str]:
+    """'frozen:<modelo>' ou 'ft:<modelo>:<estratégia>:<aumento>:<semente>' -> linha de comando."""
+    p = job.split(":")
+    if p[0] == "frozen" and len(p) == 2:
+        cmd = ["frozen", "--model", p[1]]
+    elif p[0] == "ft" and len(p) == 5:
+        cmd = ["finetune", "--model", p[1], "--strategy", p[2], "--aug", p[3], "--seeds", p[4], "--sequential"]
+    else:
+        raise ValueError(f"tarefa inválida: {job!r} (use frozen:MODELO ou ft:MODELO:ESTRAT:AUG:SEMENTE)")
+    cmd = [sys.executable, "-u", __file__, *cmd, "--num-workers", str(workers)]
+    for opt in ("epochs", "max_steps", "neg_ratio", "batch_size"):
+        v = getattr(args, opt, None)
+        if v is not None:
+            cmd += [f"--{opt.replace('_', '-')}", str(v)]
+    if args.no_pretrained:
+        cmd.append("--no-pretrained")
+    if args.config:
+        cmd += ["--config", args.config]
+    return cmd
+
+
+def run_queue(args, jobs: list[str]):
+    """Fila de tarefas: uma por GPU ao mesmo tempo (a próxima entra quando uma GPU libera).
+    Os workers de CPU são divididos entre as GPUs. Log de cada tarefa em <out>/logs/."""
     import torch
+    _, t = tp2_cfg(args)
+    n_gpu = max(1, torch.cuda.device_count())
+    workers = args.num_workers if args.num_workers is not None else max(1, (os.cpu_count() or 4) // n_gpu)
+    cmds = [(j, _job_cmd(args, j, workers)) for j in jobs]          # valida tudo antes de começar
+    logs = out_dir(t, "logs")
+    pending, running, failed, t0 = list(cmds), [], [], time.time()
+    free = list(range(n_gpu))
+    print(f"{len(jobs)} tarefas, {n_gpu} GPU(s), {workers} workers cada", flush=True)
+    while pending or running:
+        while pending and free:
+            g = free.pop(0)
+            job, cmd = pending.pop(0)
+            env = dict(os.environ)
+            if torch.cuda.is_available():
+                env["CUDA_VISIBLE_DEVICES"] = str(g)
+            f = open(logs / (job.replace(":", "_") + ".log"), "w")
+            running.append((subprocess.Popen(cmd, env=env, stdout=f, stderr=subprocess.STDOUT), g, job, f, time.time()))
+            print(f"[{(time.time() - t0) / 60:6.1f} min] início  {job}  (GPU {g})", flush=True)
+        time.sleep(1 if args.no_pretrained else 15)
+        for item in list(running):
+            p, g, job, f, ts = item
+            if p.poll() is None:
+                continue
+            f.close()
+            running.remove(item)
+            free.append(g)
+            ok = p.returncode == 0
+            print(f"[{(time.time() - t0) / 60:6.1f} min] {'fim   ' if ok else 'FALHOU'}  {job}  "
+                  f"({(time.time() - ts) / 60:.1f} min)", flush=True)
+            if not ok:
+                failed.append(job)
+                print("".join(open(f.name, encoding="utf-8", errors="replace").readlines()[-30:]), flush=True)
+    print(f"fila concluída em {(time.time() - t0) / 60:.1f} min; falhas: {failed or 'nenhuma'}", flush=True)
+    if failed:
+        sys.exit(1)
+
+
+def cmd_queue(args):
+    run_queue(args, args.jobs)
+
+
+def cmd_finetune(args):
     seeds = args.seeds or load_config(args.config)["tp2"]["seeds"]
-    n_gpu = torch.cuda.device_count()
-    if len(seeds) == 1 or n_gpu < 2 or args.sequential:
+    if args.sequential:
         for s in seeds:
             run_finetune_one(args, s)
         return
-    # uma semente por GPU, em paralelo; os workers de CPU são divididos entre os processos
-    workers = max(1, (os.cpu_count() or 4) // n_gpu)
-    pending, running = list(seeds), []
-    base = [sys.executable, "-u", __file__, "finetune", "--model", args.model, "--strategy", args.strategy,
-            "--aug", args.aug, "--num-workers", str(workers), "--sequential"]
-    for opt in ("epochs", "max_steps", "neg_ratio", "batch_size"):
-        v = getattr(args, opt)
-        if v is not None:
-            base += [f"--{opt.replace('_', '-')}", str(v)]
-    if args.no_pretrained:
-        base.append("--no-pretrained")
-    if args.config:
-        base += ["--config", args.config]
-    free = list(range(n_gpu))
-    while pending or running:
-        while pending and free:
-            g, s = free.pop(0), pending.pop(0)
-            env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(g)}
-            running.append((subprocess.Popen(base + ["--seeds", str(s)], env=env), g))
-        time.sleep(10)
-        for p, g in list(running):
-            if p.poll() is not None:
-                if p.returncode != 0:
-                    print(f"semente na GPU {g} falhou (código {p.returncode})", flush=True)
-                running.remove((p, g))
-                free.append(g)
+    run_queue(args, [f"ft:{args.model}:{args.strategy}:{args.aug}:{s}" for s in seeds])
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["counts", "bench", "frozen", "finetune"])
+    ap.add_argument("cmd", choices=["counts", "bench", "frozen", "finetune", "queue"])
     ap.add_argument("--config", default=None)
     ap.add_argument("--model", default="resnet50")
     ap.add_argument("--models", nargs="+", default=["resnet50", "deit_s", "dinov2_s"])
@@ -387,9 +429,11 @@ def main():
     ap.add_argument("--steps", type=int, default=20, help="bench: passos medidos")
     ap.add_argument("--loader-slices", type=int, default=8000, help="bench: cortes lidos (em regime)")
     ap.add_argument("--sequential", action="store_true")
+    ap.add_argument("--jobs", nargs="+", default=[], help="queue: frozen:MODELO | ft:MODELO:ESTRAT:AUG:SEMENTE")
     ap.add_argument("--no-pretrained", action="store_true", help="só para testes sem internet")
     args = ap.parse_args()
-    {"counts": cmd_counts, "bench": cmd_bench, "frozen": cmd_frozen, "finetune": cmd_finetune}[args.cmd](args)
+    {"counts": cmd_counts, "bench": cmd_bench, "frozen": cmd_frozen, "finetune": cmd_finetune,
+     "queue": cmd_queue}[args.cmd](args)
 
 
 if __name__ == "__main__":
