@@ -40,21 +40,28 @@ def _autocast(dev):
 @torch.inference_mode()
 def predict(model: Net, idx: pd.DataFrame, batch_size: int, workers: int, offset: int = 1,
             features: bool = False):
-    """Probabilidade (ou embedding) de TODOS os cortes válidos de idx, na ordem de idx.index."""
+    """Probabilidade (ou embedding) de TODOS os cortes válidos de idx. Devolve (pos, valores) com
+    pos em ordem crescente. Os embeddings são gravados direto num único array pré-alocado
+    (float16): com ResNet-50 (2048-d) o treino inteiro ocupa ~5 GB, e cópias intermediárias
+    estouravam a RAM do Kaggle com duas sessões congeladas em paralelo."""
     dev = next(model.parameters()).device
     model.eval()
     ds = EvalSlices(idx, offset)
-    pos_all, out = [], []
-    for x, pos in loader(ds, batch_size, workers):
+    pos = np.sort(idx.index[idx["ok"].to_numpy(bool)].to_numpy())
+    row = pd.Series(np.arange(len(pos)), index=pos)
+    out = None
+    for x, p in loader(ds, batch_size, workers):
         with _autocast(dev):
             x = augment.to_float(x.to(dev, non_blocking=True))
             y = model.features(x) if features else torch.sigmoid(model(x).float())
-        out.append(y.float().cpu().numpy().astype(np.float16 if features else np.float32))
-        pos_all.append(pos.numpy())
-    pos = np.concatenate(pos_all)
-    vals = np.concatenate(out)
-    order = np.argsort(pos)
-    return pos[order], vals[order]
+        y = y.float().cpu().numpy()
+        if out is None:
+            shape = (len(pos), y.shape[1]) if features else (len(pos),)
+            out = np.empty(shape, np.float16 if features else np.float32)
+        out[row.loc[p.numpy()].to_numpy()] = y
+    if out is None:
+        out = np.empty((0,), np.float32)
+    return pos, out
 
 
 def slice_frame(idx: pd.DataFrame, pos: np.ndarray, p: np.ndarray) -> pd.DataFrame:
@@ -167,7 +174,16 @@ def train_probe(emb: dict, idx: pd.DataFrame, cfg: dict, seed: int, weight_decay
     pos, X = emb["train"]
     y = torch.tensor(idx.loc[pos, "pe_present_on_image"].to_numpy(), dtype=torch.float32)
     X = torch.from_numpy(X)
-    mu, sd = X.float().mean(0), X.float().std(0).clamp_min(1e-6)
+    # média e desvio em blocos (X.float() inteiro dobraria a memória)
+    s1 = torch.zeros(X.shape[1], dtype=torch.float64)
+    s2 = torch.zeros(X.shape[1], dtype=torch.float64)
+    for i in range(0, len(X), 65536):
+        c = X[i:i + 65536].double()
+        s1 += c.sum(0)
+        s2 += (c * c).sum(0)
+    n = max(len(X), 1)
+    mu = (s1 / n).float()
+    sd = ((s2 / n - (s1 / n) ** 2).clamp_min(0) * n / max(n - 1, 1)).sqrt().float().clamp_min(1e-6)
     g = torch.Generator().manual_seed(seed)
     lin = torch.nn.Linear(X.shape[1], 1).to(dev)
     torch.manual_seed(seed)
@@ -193,5 +209,6 @@ def train_probe(emb: dict, idx: pd.DataFrame, cfg: dict, seed: int, weight_decay
 
 def probe_predict(emb_split, w, b) -> tuple[np.ndarray, np.ndarray]:
     pos, X = emb_split
-    logit = torch.from_numpy(X).float() @ w + b
-    return pos, torch.sigmoid(logit).numpy()
+    logit = np.concatenate([(torch.from_numpy(X[i:i + 65536]).float() @ w + b).numpy()
+                            for i in range(0, len(X), 65536)] or [np.empty(0, np.float32)])
+    return pos, torch.sigmoid(torch.from_numpy(logit)).numpy()

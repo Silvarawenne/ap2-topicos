@@ -179,3 +179,13 @@ def test_radimagenet_sequential_state_dict(tmp_path, monkeypatch):
     assert m.load_info["loaded"] == m.load_info["total"]
     assert torch.equal(m.backbone.layer4[2].conv3.weight, ref.layer4[2].conv3.weight)
     assert torch.allclose(m.mean, torch.full_like(m.mean, 0.5))
+
+
+def test_queue_time_limit_skips_jobs(world):
+    root, _ = world
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "10_tp2.py"), "queue", "--jobs",
+                        "ft:resnet50:const:none:3", "ft:resnet50:const:none:4", "--max-steps", "1",
+                        "--time-limit-h", "0.00001", "--config", str(root / "cfg.yaml"), "--no-pretrained"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "INTERROMPIDA" in r.stdout and "PARA REFAZER" in r.stdout
