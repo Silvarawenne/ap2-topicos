@@ -358,43 +358,83 @@ def _job_cmd(args, job: str, workers: int) -> list[str]:
     return cmd
 
 
+def _kind(job: str) -> str:
+    """Tarefas com a mesma duração esperada: tudo menos a semente."""
+    return job.rsplit(":", 1)[0] if job.startswith("ft:") else job
+
+
 def run_queue(args, jobs: list[str]):
     """Fila de tarefas: uma por GPU ao mesmo tempo (a próxima entra quando uma GPU libera).
-    Os workers de CPU são divididos entre as GPUs. Log de cada tarefa em <out>/logs/."""
+    Os workers de CPU são divididos entre as GPUs. Log de cada tarefa em <out>/logs/.
+
+    Limite de tempo (--time-limit-h; o Kaggle mata a sessão em 12 h e aí NADA é salvo):
+    uma tarefa só começa se a duração esperada (média das já concluídas do mesmo tipo; senão, da
+    fila toda) couber no tempo restante; ao atingir o limite, as tarefas em curso são encerradas
+    para a sessão terminar a tempo de gravar as concluídas. As puladas/interrompidas são listadas
+    no fim, prontas para outra sessão."""
     import torch
     _, t = tp2_cfg(args)
     n_gpu = max(1, torch.cuda.device_count())
     workers = args.num_workers if args.num_workers is not None else max(1, (os.cpu_count() or 4) // n_gpu)
     cmds = [(j, _job_cmd(args, j, workers)) for j in jobs]          # valida tudo antes de começar
     logs = out_dir(t, "logs")
-    pending, running, failed, t0 = list(cmds), [], [], time.time()
+    limit = args.time_limit_h * 3600 if args.time_limit_h else float("inf")
+    pending, running, failed, skipped, killed, t0 = list(cmds), [], [], [], [], time.time()
+    durations: dict[str, list[float]] = {}
     free = list(range(n_gpu))
-    print(f"{len(jobs)} tarefas, {n_gpu} GPU(s), {workers} workers cada", flush=True)
+    stamp = lambda: f"[{(time.time() - t0) / 60:6.1f} min]"  # noqa: E731
+    print(f"{len(jobs)} tarefas, {n_gpu} GPU(s), {workers} workers cada, limite "
+          f"{args.time_limit_h or '-'} h", flush=True)
+
+    def expected(job):
+        d = durations.get(_kind(job)) or [x for v in durations.values() for x in v]
+        return sum(d) / len(d) if d else 0.0
+
     while pending or running:
         while pending and free:
-            g = free.pop(0)
             job, cmd = pending.pop(0)
+            if time.time() - t0 + expected(job) > limit:
+                skipped.append(job)
+                print(f"{stamp()} PULADA  {job}  (esperado {expected(job) / 60:.0f} min, não cabe no limite)", flush=True)
+                continue
+            g = free.pop(0)
             env = dict(os.environ)
             if torch.cuda.is_available():
                 env["CUDA_VISIBLE_DEVICES"] = str(g)
             f = open(logs / (job.replace(":", "_") + ".log"), "w")
             running.append((subprocess.Popen(cmd, env=env, stdout=f, stderr=subprocess.STDOUT), g, job, f, time.time()))
-            print(f"[{(time.time() - t0) / 60:6.1f} min] início  {job}  (GPU {g})", flush=True)
+            print(f"{stamp()} início  {job}  (GPU {g})", flush=True)
         time.sleep(1 if args.no_pretrained else 15)
+        over = time.time() - t0 > limit
         for item in list(running):
             p, g, job, f, ts = item
+            if p.poll() is None and over:
+                p.terminate()
+                try:
+                    p.wait(60)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait()
+                killed.append(job)
+                print(f"{stamp()} INTERROMPIDA  {job}  (limite de tempo)", flush=True)
             if p.poll() is None:
                 continue
             f.close()
             running.remove(item)
             free.append(g)
+            if job in killed:
+                continue
             ok = p.returncode == 0
-            print(f"[{(time.time() - t0) / 60:6.1f} min] {'fim   ' if ok else 'FALHOU'}  {job}  "
-                  f"({(time.time() - ts) / 60:.1f} min)", flush=True)
-            if not ok:
+            print(f"{stamp()} {'fim   ' if ok else 'FALHOU'}  {job}  ({(time.time() - ts) / 60:.1f} min)", flush=True)
+            if ok:
+                durations.setdefault(_kind(job), []).append(time.time() - ts)
+            else:
                 failed.append(job)
                 print("".join(open(f.name, encoding="utf-8", errors="replace").readlines()[-30:]), flush=True)
     print(f"fila concluída em {(time.time() - t0) / 60:.1f} min; falhas: {failed or 'nenhuma'}", flush=True)
+    redo = failed + killed + skipped
+    if redo:
+        print("PARA REFAZER noutra sessão:", " ".join(redo), flush=True)
     if failed:
         sys.exit(1)
 
@@ -429,6 +469,8 @@ def main():
     ap.add_argument("--steps", type=int, default=20, help="bench: passos medidos")
     ap.add_argument("--loader-slices", type=int, default=8000, help="bench: cortes lidos (em regime)")
     ap.add_argument("--sequential", action="store_true")
+    ap.add_argument("--time-limit-h", type=float, default=11.0,
+                    help="queue: não começa tarefa que não caiba e encerra as em curso nesse limite (0 = sem)")
     ap.add_argument("--jobs", nargs="+", default=[], help="queue: frozen:MODELO | ft:MODELO:ESTRAT:AUG:SEMENTE")
     ap.add_argument("--no-pretrained", action="store_true", help="só para testes sem internet")
     args = ap.parse_args()

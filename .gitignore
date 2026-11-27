@@ -16,3 +16,4 @@ __pycache__/
 features_full/
 *.npz
 *.npy
+kaggle_outputs/
