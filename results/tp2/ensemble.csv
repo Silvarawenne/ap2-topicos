@@ -1,0 +1,13 @@
+config,label,ens_test_auc,ens_ci_lo,ens_ci_hi,n_exams
+frozen_deit_s,DeiT-S (ImageNet) · congelado,0.5895761720009952,0.5577125628738453,0.6216818724657085,1424
+frozen_dinov2_s,DINOv2 ViT-S/14 · congelado,0.5869727493065219,0.5548583389168883,0.6173547754336286,1424
+frozen_radimagenet_resnet50,ResNet-50 (RadImageNet) · congelado,0.5916151357926847,0.5612366557712355,0.6233000563882893,1424
+frozen_resnet50,ResNet-50 (ImageNet) · congelado,0.5984784952677609,0.5665427005997242,0.6295615329651405,1424
+ft_deit_s_cosine_main,DeiT-S (ImageNet) · ajuste fino · cosine · aum. main,0.760291583341781,0.7317406339178208,0.7875554479057564,1424
+ft_dinov2_s_const_main,DINOv2 ViT-S/14 · ajuste fino · const · aum. main,0.5116025103445734,0.4793730410464704,0.5425422534380934,1424
+ft_dinov2_s_cosine_main,DINOv2 ViT-S/14 · ajuste fino · cosine · aum. main,0.5791486577397683,0.5465201129634986,0.6107451558448299,1424
+ft_dinov2_s_llrd_main,DINOv2 ViT-S/14 · ajuste fino · llrd · aum. main,0.8274967514814167,0.8026177666232289,0.8513786588644537,1424
+ft_radimagenet_resnet50_cosine_main,ResNet-50 (RadImageNet) · ajuste fino · cosine · aum. main,0.7493595119388817,0.7196286167302998,0.7774300449189802,1424
+ft_resnet50_cosine_main,ResNet-50 (ImageNet) · ajuste fino · cosine · aum. main,0.7957142593838413,0.7684623504785104,0.8221543905362749,1424
+ft_resnet50_cosine_none,ResNet-50 (ImageNet) · ajuste fino · cosine · aum. none,0.7260922855747343,0.6970282249456039,0.7550448482105098,1424
+ft_resnet50_cosine_strong,ResNet-50 (ImageNet) · ajuste fino · cosine · aum. strong,0.8055220208089502,0.7785744199516237,0.8307594648538921,1424
