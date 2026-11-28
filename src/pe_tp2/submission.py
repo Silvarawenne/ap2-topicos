@@ -174,6 +174,29 @@ def build(slices: pd.DataFrame, exam_scores: pd.Series, priors: dict, cal: dict 
     return exams, im
 
 
+def val_exam_scores(runs, k: int) -> pd.DataFrame:
+    """Média entre execuções (sementes) do escore de exame da VALIDAÇÃO: índice = exame; pe, score."""
+    from pathlib import Path
+    col = f"top{k}"
+    parts = [pd.read_csv(Path(r) / "exam_val.csv")[[STUDY, "pe", col]] for r in runs]
+    return pd.concat(parts).groupby(STUDY).agg(pe=("pe", "first"), score=(col, "mean"))
+
+
+def finalize(exams: pd.DataFrame, images: pd.DataFrame, sample: pd.DataFrame | None = None):
+    """-> (submissão id,label na ordem do sample_submission, verificação das regras). Falha se os
+    ids não baterem com o sample_submission ou se alguma regra de consistência for violada."""
+    cons = check_consistency(exams, images)
+    sub = to_long(exams, images)
+    if sample is not None:
+        missing, extra = set(sample["id"]) - set(sub["id"]), set(sub["id"]) - set(sample["id"])
+        if missing or extra:
+            raise SystemExit(f"ids diferentes do sample_submission: faltam {len(missing)}, sobram {len(extra)}")
+        sub = sample[["id"]].merge(sub, on="id", how="left")
+    if any(cons.values()) or sub["label"].isna().any():
+        raise SystemExit(f"submissão inconsistente: {cons}")
+    return sub, cons
+
+
 # ----------------------------------------------------------------- verificação e métrica
 
 def check_consistency(exams: pd.DataFrame, images: pd.DataFrame) -> dict:

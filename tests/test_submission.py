@@ -115,7 +115,7 @@ def test_script_end_to_end(tmp_path):
                         "--no-pretrained"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-3000:]
     # o "test.csv oficial" e o sample_submission do mundo sintético
-    test = train[train[STUDY].isin(off)][[STUDY, SOP]]
+    test = train[train[STUDY].isin(off)][[STUDY, "SeriesInstanceUID", SOP]]
     test.to_csv(data / "test.csv", index=False)
     ids = list(test[SOP]) + [f"{s}_{c}" for s in off for c in S.EXAM_LABELS]
     pd.DataFrame({"id": ids, "label": 0.5}).to_csv(data / "sample_submission.csv", index=False)
@@ -129,3 +129,18 @@ def test_script_end_to_end(tmp_path):
     assert list(sub["id"]) == ids and sub["label"].between(0, 1).all()
     rep = __import__("json").loads((tmp_path / "sub" / "report.json").read_text(encoding="utf-8"))
     assert sum(rep["official"]["consistency"].values()) == 0
+    # inferência direto dos DICOMs (notebook de submissão): mesma saída que a extração + treino
+    pri_json = tmp_path / "priors.json"          # como o notebook 03 grava (sem train.csv na submissão)
+    pri_json.write_text(__import__("json").dumps(rep["priors"]), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "13_kaggle_infer.py"), "--runs", str(run),
+                        "--out", str(tmp_path / "sub13"), "--config", str(tmp_path / "cfg.yaml"),
+                        "--data-root", str(data), "--workers", "0", "--batch", "4", "--priors", str(pri_json)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-3000:]
+    sub13 = pd.read_csv(tmp_path / "sub13" / "submission.csv")
+    assert list(sub13["id"]) == ids
+    rep13 = __import__("json").loads((tmp_path / "sub13" / "submission_report.json").read_text(encoding="utf-8"))
+    par = rep13["parity_vs_extraction"][run.name]
+    assert par["n_exams"] == len(off) and par["max_abs_diff"] < 1e-4, par
+    assert sum(rep13["consistency"].values()) == 0 and rep13["exams_without_prediction"] == 0
+    assert np.allclose(sub13["label"], sub["label"], atol=1e-4)

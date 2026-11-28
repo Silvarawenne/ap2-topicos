@@ -31,7 +31,8 @@ def load_runs(runs, k):
     """Média entre execuções: escore de exame (top-k) e probabilidade por corte."""
     col = f"top{k}"
     ex, sl = {}, {}
-    for split in ("val", "test", "official_test"):
+    ex["val"] = S.val_exam_scores(runs, k)
+    for split in ("test", "official_test"):
         parts = [pd.read_csv(Path(r) / f"exam_{split}.csv")[[STUDY, "pe", col]] for r in runs]
         ex[split] = pd.concat(parts).groupby(STUDY).agg(pe=("pe", "first"), score=(col, "mean"))
     for split in ("test", "official_test"):
@@ -78,20 +79,11 @@ def main():
     # teste oficial
     test = pd.read_csv(test_csv)
     e, im = S.build(sl["official_test"], ex["official_test"]["score"], priors, cal, test[[STUDY, SOP]])
-    cons = S.check_consistency(e, im)
-    sub = S.to_long(e, im)
+    sub, cons = S.finalize(e, im, pd.read_csv(sample) if sample.exists() else None)
     rep["official"] = {"rows": len(sub), "exams": len(e), "images": len(im), "consistency": cons,
                        "exams_positive": int((e["negative_exam_for_pe"] < 0.5).sum()),
-                       "images_with_prediction": int(test[SOP].isin(sl["official_test"][SOP]).sum())}
-    if sample.exists():
-        ss = pd.read_csv(sample)
-        missing, extra = set(ss["id"]) - set(sub["id"]), set(sub["id"]) - set(ss["id"])
-        rep["official"].update(sample_rows=len(ss), missing_ids=len(missing), extra_ids=len(extra))
-        if missing or extra:
-            raise SystemExit(f"ids diferentes do sample_submission: faltam {len(missing)}, sobram {len(extra)}")
-        sub = ss[["id"]].merge(sub, on="id", how="left")
-    if any(cons.values()) or sub["label"].isna().any():
-        raise SystemExit(f"submissão inconsistente: {cons}")
+                       "images_with_prediction": int(test[SOP].isin(sl["official_test"][SOP]).sum()),
+                       "checked_against_sample": bool(sample.exists())}
     sub.to_csv(out / "submission.csv", index=False)
     (out / "report.json").write_text(json.dumps(rep, indent=2, default=float), encoding="utf-8")
     print(json.dumps(rep["official"], indent=2))
